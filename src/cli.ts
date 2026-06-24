@@ -159,6 +159,26 @@ program
   });
 
 program
+  .command("run-host")
+  .argument("<task>", "Task prompt.")
+  .requiredOption("--project <project>", "Project scope.")
+  .requiredOption("--host <host>", "Agent host to run over: claude-code | codex | antigravity")
+  .option("--cwd <dir>", "Working directory for the host process.")
+  .option("--timeout <ms>", "Kill the host after N ms.")
+  .description("Run a task OVER an external agent host (Codex/Claude Code/Antigravity), wrapped with durable context + telemetry.")
+  .action(async (task, opts) => {
+    const { runOnHost } = await import("./hosts/run.js");
+    const result = await runOnHost(task, opts.project, {
+      host: opts.host,
+      cwd: opts.cwd,
+      timeoutMs: opts.timeout ? Number(opts.timeout) : undefined,
+    });
+    console.log(`run_id=${result.run_id} host=${result.host} status=${result.status} exit=${result.exit_code}`);
+    console.log(result.final_text);
+    await closeClient();
+  });
+
+program
   .command("orchestrate")
   .argument("<task>", "Master task prompt.")
   .requiredOption("--project <project>", "Project scope.")
