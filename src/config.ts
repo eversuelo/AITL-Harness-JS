@@ -13,6 +13,8 @@ import { type EnvKey, readConfigFile } from "./config/store.js";
 const SettingsSchema = z.object({
   // ── MongoDB ──────────────────────────────────────────────────────────
   mongodbUri: z.string().default("mongodb://localhost:27017/?directConnection=true"),
+  // Optional second URI tried when the primary is unreachable (local <-> Atlas).
+  mongodbUriFallback: z.string().default(""),
   mongodbDb: z.string().default("aitl"),
 
   // ── Model providers (incremental: gemini -> openai -> antigravity -> gemini-antigravity) ──
@@ -57,6 +59,7 @@ function loadSettings(): Settings {
 
   const parsed = SettingsSchema.parse({
     mongodbUri: env("MONGODB_URI"),
+    mongodbUriFallback: env("MONGODB_URI_FALLBACK"),
     mongodbDb: env("MONGODB_DB"),
     modelPrimary: env("MODEL_PRIMARY"),
     modelSecondary: env("MODEL_SECONDARY"),

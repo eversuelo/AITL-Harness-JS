@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { ContextManager } from "../context/manager.js";
+import { hydrate, summarizeSession } from "../memory/lifecycle.js";
 import { makeEvent, makeMessage, makeRun } from "../memory/schemas.js";
 import { MemoryStore } from "../memory/store.js";
 import { type Provider, getProvider } from "../providers/base.js";
@@ -22,12 +23,18 @@ export interface RunAgentOpts {
   store?: MemoryStore;
   system?: string;
   maxIters?: number;
+  /** Load relevant durable memory into the system prompt at session start (default true). */
+  hydrate?: boolean;
+  /** Write a classified session summary to memory at session end (default true). */
+  summarize?: boolean;
 }
 
 export interface RunAgentResult {
   run_id: string;
   final_text: string;
   iters: number;
+  /** Slug of the session-summary memory doc written at the end, if any. */
+  summary_slug?: string;
 }
 
 /** Run one agent task to completion. */
@@ -46,6 +53,18 @@ export async function runAgent(
   const run = makeRun({ project, model: provider.name, harness_config: { max_iters: maxIters } });
   await store.db.collection("runs").insertOne({ ...run, _id: runId as never });
 
+  // ── hydrate: load relevant durable memory into the system prompt (mem_context) ──
+  let system = opts.system;
+  if (opts.hydrate !== false) {
+    try {
+      const { preamble, count } = await hydrate(project, prompt, { store });
+      if (preamble) system = [preamble, opts.system].filter(Boolean).join("\n\n");
+      await store.logEvent(makeEvent({ project, run_id: runId, type: "hydrate", payload: { recovered: count } }));
+    } catch {
+      // Hydration is best-effort; never block the run.
+    }
+  }
+
   let convo: Record<string, unknown>[] = [{ role: "user", content: prompt }];
   let idx = 0;
   await store.appendMessage(
@@ -60,7 +79,7 @@ export async function runAgent(
       await store.logEvent(makeEvent({ project, run_id: runId, type: "compaction", payload: { iter: it } }));
     }
 
-    const turn = await provider.chat(convo, { tools: registry.schemas(), system: opts.system });
+    const turn = await provider.chat(convo, { tools: registry.schemas(), system });
     idx += 1;
     await store.appendMessage(
       makeMessage({
@@ -92,10 +111,26 @@ export async function runAgent(
     }
   }
 
+  // ── session summary: compress the run into durable memory (mem_session_summary) ──
+  let summarySlug: string | undefined;
+  if (opts.summarize !== false) {
+    try {
+      const res = await summarizeSession(project, runId, convo, { store, provider });
+      if (res) {
+        summarySlug = res.slug;
+        await store.logEvent(
+          makeEvent({ project, run_id: runId, type: "session_summary", payload: { slug: res.slug, category: res.category } }),
+        );
+      }
+    } catch {
+      // Summarization is best-effort; never fail a completed run over it.
+    }
+  }
+
   await store.db
     .collection("runs")
     .updateOne({ _id: runId as never }, { $set: { status: "done", ended_at: new Date() } });
-  return { run_id: runId, final_text: finalText, iters: it + 1 };
+  return { run_id: runId, final_text: finalText, iters: it + 1, summary_slug: summarySlug };
 }
 
 /**

@@ -4,13 +4,16 @@
  * Usage: npm run check-db   (or: tsx scripts/checkDb.ts)
  */
 
-import { checkMongoConnection, closeClient } from "../src/db/client.js";
+import { connectWithFallback, closeClient } from "../src/db/client.js";
 
 async function main(): Promise<void> {
-  const report = await checkMongoConnection();
-  console.log(`MongoDB ping OK: ${report.uri} (db=${report.dbName})`);
-  if (report.serverVersion !== undefined) {
-    console.log(`Server version: ${report.serverVersion}`);
+  const result = await connectWithFallback({
+    onAttempt: (a) =>
+      console.log(a.ok ? `  ✓ ${a.label}: ${a.uri}` : `  ✗ ${a.label}: ${a.uri} — ${a.error}`),
+  });
+  console.log(`MongoDB ping OK via ${result.label}: ${result.uri} (db=${result.dbName})`);
+  if (result.serverVersion !== undefined) {
+    console.log(`Server version: ${result.serverVersion}`);
   }
 }
 

@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 /** Canonical ENV keys the harness understands (kept in sync with `.env.example`). */
 export const ENV_KEYS = [
   "MONGODB_URI",
+  "MONGODB_URI_FALLBACK",
   "MONGODB_DB",
   "MODEL_PRIMARY",
   "MODEL_SECONDARY",
@@ -122,7 +123,8 @@ export function resolveProfile(opts: { includeSecrets?: boolean } = {}): ConfigP
     const value = fromEnv != null && fromEnv !== "" ? fromEnv : file[key];
     if (value == null || value === "") continue;
     if (!opts.includeSecrets && SECRET_KEYS.has(key)) out[key] = maskSecret(value);
-    else if (!opts.includeSecrets && key === "MONGODB_URI") out[key] = redactUri(value);
+    else if (!opts.includeSecrets && (key === "MONGODB_URI" || key === "MONGODB_URI_FALLBACK"))
+      out[key] = redactUri(value);
     else out[key] = value;
   }
   return out;

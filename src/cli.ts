@@ -31,6 +31,25 @@ program
   .version("0.1.0")
   .option("-i, --interactive", "Launch the interactive control panel (supervise MCP/UI, run commands).");
 
+// Commands that never touch MongoDB — skip the connection probe so they stay instant
+// and work offline (the interactive panel only supervises child processes).
+const NO_DB_COMMANDS = new Set(["interactive", "menu", "config", "init", "help", "check-db"]);
+
+// Resolve the working MongoDB URI (primary → fallback) once, before any DB command runs,
+// so every subcommand inherits the resilient local-and/or-Atlas connection.
+program.hook("preAction", async (_thisCommand, actionCommand) => {
+  if (NO_DB_COMMANDS.has(actionCommand.name())) return;
+  const { connectWithFallback } = await import("./db/client.js");
+  try {
+    const result = await connectWithFallback();
+    if (result.label === "fallback") {
+      console.error(`[aitl] primary MongoDB unreachable; using fallback: ${result.uri}`);
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+  }
+});
+
 async function launchInteractive(): Promise<void> {
   const { runInteractive } = await import("./interactive/menu.js");
   await runInteractive();
@@ -47,13 +66,16 @@ program
 
 program
   .command("check-db")
-  .description("Validate MongoDB connectivity/auth without creating collections or indexes.")
+  .description("Validate MongoDB connectivity/auth (tries primary then fallback) without creating collections or indexes.")
   .action(async () => {
-    const { checkMongoConnection } = await import("./db/client.js");
-    const report = await checkMongoConnection();
-    console.log(`MongoDB ping OK: ${report.uri} (db=${report.dbName})`);
-    if (report.serverVersion !== undefined) {
-      console.log(`Server version: ${report.serverVersion}`);
+    const { connectWithFallback } = await import("./db/client.js");
+    const result = await connectWithFallback({
+      onAttempt: (a) =>
+        console.log(a.ok ? `  ✓ ${a.label}: ${a.uri}` : `  ✗ ${a.label}: ${a.uri} — ${a.error}`),
+    });
+    console.log(`MongoDB ping OK via ${result.label}: ${result.uri} (db=${result.dbName})`);
+    if (result.serverVersion !== undefined) {
+      console.log(`Server version: ${result.serverVersion}`);
     }
     await closeClient();
   });
@@ -206,10 +228,19 @@ program
 
 program
   .command("mcp")
-  .description("Run the MCP server (stdio) so Claude Code can use AITL's durable memory.")
-  .action(async () => {
-    const { main } = await import("./mcpserver/server.js");
-    await main();
+  .description("Run the MCP server so Claude Code (stdio) or remote clients (--http) can use AITL's durable memory.")
+  .option("--http", "Serve over Streamable HTTP instead of stdio (exposes the server on the network).", false)
+  .option("--host <host>", "HTTP bind host (use 0.0.0.0 behind a proxy/tunnel).", "127.0.0.1")
+  .option("--port <n>", "HTTP port.", "8000")
+  .option("--path <path>", "HTTP path.", "/mcp")
+  .option("--token <token>", "Require this Bearer token (or set AITL_MCP_TOKEN). Omit only on trusted localhost.")
+  .action(async (opts) => {
+    const { main, mainHttp } = await import("./mcpserver/server.js");
+    if (opts.http) {
+      await mainHttp({ host: opts.host, port: Number(opts.port), path: opts.path, token: opts.token });
+    } else {
+      await main();
+    }
   });
 
 // ── config (portable profile for `npm i -g`; stored at ~/.aitl/config.json) ──────

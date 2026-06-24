@@ -3,6 +3,12 @@
  *
  * The exact same code works against the local `mongodb-atlas-local` container and a
  * cloud Atlas cluster — only `MONGODB_URI` differs (ADR-0002).
+ *
+ * To make the harness run **local and/or Atlas** without manual edits, connection is
+ * resilient: `connectWithFallback()` tries `MONGODB_URI` first and, if it is
+ * unreachable (cluster down, IP not allowlisted, or a local SRV-DNS failure such as
+ * `querySrv ECONNREFUSED`), transparently falls back to `MONGODB_URI_FALLBACK`. The
+ * URI that actually answered a `ping` becomes the active one for the whole process.
  */
 
 import { MongoClient, type Db } from "mongodb";
@@ -24,6 +30,8 @@ export const COLLECTIONS = [
 ] as const;
 
 let _client: MongoClient | null = null;
+/** The URI that actually answered a ping (set by connectWithFallback). */
+let _activeUri: string | null = null;
 
 export interface MongoConnectionReport {
   uri: string;
@@ -33,22 +41,99 @@ export interface MongoConnectionReport {
 }
 
 /** Hide credentials before printing a MongoDB URI to logs/CLI output. */
-export function redactMongoUri(uri: string = settings.mongodbUri): string {
+export function redactMongoUri(uri: string = activeUri()): string {
   return uri.replace(/^(mongodb(?:\+srv)?:\/\/)(?:[^@/?#]+@)/i, "$1<credentials>@");
+}
+
+/** The URI currently in use (the one that connected, or the configured primary). */
+export function activeUri(): string {
+  return _activeUri ?? settings.mongodbUri;
+}
+
+/** Candidate URIs in priority order: primary first, optional fallback second. */
+function candidateUris(): { label: string; uri: string }[] {
+  const list = [{ label: "primary", uri: settings.mongodbUri }];
+  const fb = settings.mongodbUriFallback.trim();
+  if (fb && fb !== settings.mongodbUri) list.push({ label: "fallback", uri: fb });
+  return list;
 }
 
 /**
  * Cached MongoClient. The Node driver pools connections and auto-connects on the
- * first operation, so callers don't need to await `connect()` explicitly.
+ * first operation, so callers don't need to await `connect()` explicitly. Uses the
+ * active URI (set by connectWithFallback) if one has been chosen.
  */
 export function getClient(): MongoClient {
   if (_client === null) {
-    _client = new MongoClient(settings.mongodbUri, {
+    _client = new MongoClient(activeUri(), {
       appName: "aitl-harness",
       serverSelectionTimeoutMS: 10_000,
     });
   }
   return _client;
+}
+
+export interface ConnectAttempt {
+  label: string;
+  uri: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface ConnectResult extends MongoConnectionReport {
+  label: string;
+  attempts: ConnectAttempt[];
+}
+
+/**
+ * Establish the shared client, trying each candidate URI until one answers a ping.
+ * Idempotent: once a client is connected this is a cheap no-op that re-pings. Throws
+ * only if every candidate fails (the error lists what was tried, credentials redacted).
+ */
+export async function connectWithFallback(opts: {
+  name?: string;
+  onAttempt?: (a: ConnectAttempt) => void;
+} = {}): Promise<ConnectResult> {
+  // Already connected → reuse without re-dialing.
+  if (_client !== null && _activeUri !== null) {
+    const report = await checkMongoConnection(opts.name);
+    return { ...report, label: "active", attempts: [{ label: "active", uri: report.uri, ok: report.ok }] };
+  }
+
+  const attempts: ConnectAttempt[] = [];
+  let lastError: unknown;
+  for (const cand of candidateUris()) {
+    const client = new MongoClient(cand.uri, {
+      appName: "aitl-harness",
+      serverSelectionTimeoutMS: 8_000,
+    });
+    try {
+      await client.db(settings.mongodbDb).admin().command({ ping: 1 });
+      _client = client;
+      _activeUri = cand.uri;
+      const attempt: ConnectAttempt = { label: cand.label, uri: redactMongoUri(cand.uri), ok: true };
+      attempts.push(attempt);
+      opts.onAttempt?.(attempt);
+      const report = await checkMongoConnection(opts.name);
+      return { ...report, label: cand.label, attempts };
+    } catch (err) {
+      lastError = err;
+      const attempt: ConnectAttempt = {
+        label: cand.label,
+        uri: redactMongoUri(cand.uri),
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+      attempts.push(attempt);
+      opts.onAttempt?.(attempt);
+      await client.close().catch(() => {});
+    }
+  }
+
+  const summary = attempts.map((a) => `  - ${a.label} ${a.uri}: ${a.error}`).join("\n");
+  const error = new Error(`All MongoDB URIs failed:\n${summary}`);
+  (error as Error & { cause?: unknown }).cause = lastError;
+  throw error;
 }
 
 /** Return the AITL database handle. */
@@ -81,5 +166,6 @@ export async function closeClient(): Promise<void> {
   if (_client !== null) {
     await _client.close();
     _client = null;
+    _activeUri = null;
   }
 }

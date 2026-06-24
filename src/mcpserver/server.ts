@@ -10,12 +10,14 @@
 
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
+import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { getDb } from "../db/client.js";
+import { connectWithFallback, getDb } from "../db/client.js";
 import { embedOne } from "../ingest/embedder.js";
 import { extractLinks, parseMarkdownDir } from "../ingest/markdown.js";
 import { Classifier } from "../memory/classifier.js";
@@ -23,6 +25,8 @@ import { MEMORY_TYPES, type MemoryType, makeMemoryDoc } from "../memory/schemas.
 import { MemoryStore } from "../memory/store.js";
 import { ADRStore } from "../decisions/adr.js";
 import { RepoMap } from "../repomap/store.js";
+import { DefinitionStore } from "../projectctx/store.js";
+import { AGENTS_COLLECTION, SKILLS_COLLECTION, type DefinitionKind } from "../projectctx/schemas.js";
 
 /** Recursively strip Mongo `_id`/`embedding` and stringify ObjectId/Date. */
 function jsonable(value: unknown): unknown {
@@ -183,6 +187,27 @@ async function ensureMcpStorage(): Promise<void> {
     });
   }
   await mcpStorageReady;
+}
+
+let projectCtxStorageReady: Promise<void> | null = null;
+
+async function ensureProjectCtxStorage(): Promise<void> {
+  if (projectCtxStorageReady === null) {
+    projectCtxStorageReady = (async () => {
+      const db = getDb();
+      for (const name of [AGENTS_COLLECTION, SKILLS_COLLECTION]) {
+        await ensureCollection(name);
+        await db.collection(name).createIndex({ project: 1, name: 1 }, { unique: true });
+        await db.collection(name).createIndex({ project: 1, updated_at: -1 });
+        await db.collection(name).createIndex({ project: 1, tags: 1 });
+        await db.collection(name).createIndex({ name: "text", description: "text", content: "text" });
+      }
+    })().catch((err) => {
+      projectCtxStorageReady = null;
+      throw err;
+    });
+  }
+  await projectCtxStorageReady;
 }
 
 async function persistMcpToolCall(doc: Record<string, unknown>): Promise<void> {
@@ -561,6 +586,90 @@ export function buildServer(): McpServer {
     },
   );
 
+  // ── project context: agents & skills ────────────────────────────────────────
+  // Reusable, project-scoped definitions the MCP serves on every repo call so a
+  // client can recover project context. Same CRUD/search surface for both kinds.
+  const registerDefinitionTools = (kind: DefinitionKind) => {
+    const noun = kind; // "agent" | "skill"
+    const plural = `${kind}s`;
+    const store = () => new DefinitionStore(kind);
+
+    server.tool(
+      `write_${noun}`,
+      `Create/update ONE project-scoped ${noun} definition, keyed by (project, name). Upsert: re-writing the same name updates it.`,
+      {
+        project: z.string(),
+        name: z.string(),
+        content: z.string(),
+        description: z.string().default(""),
+        source: z.string().default("mcp"),
+        tags: z.array(z.string()).optional(),
+      },
+      async ({ project, name, content, description, source, tags }) => {
+        return runLogged(`write_${noun}`, { project, name, content, description, source, tags }, async () => {
+          await ensureProjectCtxStorage();
+          const doc = await store().upsert({ project, name, content, description, source, tags: tags ?? [] });
+          return text({ project: doc.project, name: doc.name, description: doc.description, tags: doc.tags, updated_at: doc.updated_at });
+        });
+      },
+    );
+
+    server.tool(
+      `get_${noun}`,
+      `Fetch ONE ${noun} definition by (project, name). Returns null if absent.`,
+      { project: z.string(), name: z.string() },
+      async ({ project, name }) => {
+        return runLogged(`get_${noun}`, { project, name }, async () => {
+          await ensureProjectCtxStorage();
+          const doc = await store().get(project, name);
+          return text(doc ? jsonable(doc) : null);
+        });
+      },
+    );
+
+    server.tool(
+      `list_${plural}`,
+      `List ${plural} for a project, newest first. Optional tag filter.`,
+      { project: z.string(), limit: z.number().int().min(1).max(200).default(100), tag: z.string().optional() },
+      async ({ project, limit, tag }) => {
+        return runLogged(`list_${plural}`, { project, limit, tag }, async () => {
+          await ensureProjectCtxStorage();
+          const rows = await store().list(project, { tag, limit });
+          return text(rows.map(jsonable));
+        });
+      },
+    );
+
+    server.tool(
+      `search_${plural}`,
+      `Search ${plural} for a project by text (name/description/content). Mongo $text with regex fallback.`,
+      { project: z.string(), query: z.string(), limit: z.number().int().min(1).max(50).default(10) },
+      async ({ project, query, limit }) => {
+        return runLogged(`search_${plural}`, { project, query, limit }, async () => {
+          await ensureProjectCtxStorage();
+          const rows = await store().search(project, query, limit);
+          return text(rows.map(jsonable));
+        });
+      },
+    );
+
+    server.tool(
+      `delete_${noun}`,
+      `Delete ONE ${noun} definition by (project, name). Returns whether a doc was removed.`,
+      { project: z.string(), name: z.string() },
+      async ({ project, name }) => {
+        return runLogged(`delete_${noun}`, { project, name }, async () => {
+          await ensureProjectCtxStorage();
+          const deleted = await store().delete(project, name);
+          return text({ project, name, deleted });
+        });
+      },
+    );
+  };
+
+  registerDefinitionTools("agent");
+  registerDefinitionTools("skill");
+
   // ── graphify ─────────────────────────────────────────────────────────────────
   server.tool(
     "graphify",
@@ -645,8 +754,109 @@ function graphToDot(perProject: Record<string, any>): string {
   return lines.join("\n");
 }
 
-/** Entry point — run the MCP server over stdio. */
+export interface HttpOptions {
+  host?: string;
+  port?: number;
+  path?: string;
+  /** Required Bearer token; falsy means the endpoint is unauthenticated. */
+  token?: string;
+}
+
+function unauthorized(res: ServerResponse): void {
+  res.writeHead(401, { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" });
+  res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null }));
+}
+
+/**
+ * Serve the MCP over Streamable HTTP (the network transport). One fresh server +
+ * transport is built per request (stateless: `sessionIdGenerator: undefined`) so
+ * concurrent clients never share request-id state. All tools are request/response,
+ * so no cross-request session is needed. Pair with a TLS proxy/tunnel to expose it.
+ */
+export async function mainHttp(opts: HttpOptions = {}): Promise<void> {
+  const host = opts.host ?? process.env.AITL_MCP_HOST ?? "127.0.0.1";
+  const port = opts.port ?? Number.parseInt(process.env.AITL_MCP_PORT ?? "8000", 10);
+  const path = opts.path ?? process.env.AITL_MCP_PATH ?? "/mcp";
+  const token = (opts.token ?? process.env.AITL_MCP_TOKEN ?? "").trim() || undefined;
+  // DNS-rebinding protection is on unless explicitly disabled (needed for tunnels
+  // whose public Host header is not in the allow-list — then set AITL_MCP_DNS_REBINDING=0).
+  const dnsProtection = (process.env.AITL_MCP_DNS_REBINDING ?? "1") !== "0";
+  const allowedHosts = (
+    process.env.AITL_MCP_ALLOWED_HOSTS ?? `${host}:${port},localhost:${port},127.0.0.1:${port}`
+  )
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    try {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `${host}:${port}`}`);
+      if (url.pathname !== path) {
+        res.writeHead(404).end();
+        return;
+      }
+      if (token && req.headers.authorization !== `Bearer ${token}`) {
+        logEvent("http:unauthorized", { remote: req.socket.remoteAddress });
+        unauthorized(res);
+        return;
+      }
+      const server = buildServer();
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableDnsRebindingProtection: dnsProtection,
+        allowedHosts,
+      });
+      res.on("close", () => {
+        void transport.close();
+        void server.close();
+      });
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (err) {
+      logEvent("http:error", { error: errorInfo(err) });
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null }));
+      }
+    }
+  });
+
+  await connectDb();
+  await new Promise<void>((listening) => httpServer.listen(port, host, listening));
+  logEvent("server:start", {
+    transport: "streamable-http",
+    url: `http://${host}:${port}${path}`,
+    auth: token ? "bearer" : "none",
+    dnsRebindingProtection: dnsProtection,
+    allowedHosts,
+    db: maskUri(process.env.MONGODB_URI),
+    logFile: logFile ?? null,
+  });
+}
+
+/**
+ * Connect to MongoDB with primary→fallback resolution, logging each attempt and the
+ * URI that won. Never throws: if every URI fails we log `db:error` and let the server
+ * start anyway, so individual tools fail with a clear message instead of crash-looping.
+ */
+async function connectDb(): Promise<void> {
+  try {
+    const result = await connectWithFallback({
+      onAttempt: (a) => logEvent("db:attempt", { label: a.label, uri: a.uri, ok: a.ok, error: a.error }),
+    });
+    logEvent("db:connected", { uri: result.uri, db: result.dbName, via: result.label, serverVersion: result.serverVersion ?? null });
+  } catch (err) {
+    logEvent("db:error", { error: errorInfo(err) });
+  }
+}
+
+/** Entry point — run the MCP server over stdio (default) or HTTP (AITL_MCP_TRANSPORT=http). */
 export async function main(): Promise<void> {
+  const transport = (process.env.AITL_MCP_TRANSPORT ?? "stdio").toLowerCase();
+  if (transport === "http" || transport === "streamable-http") {
+    await mainHttp();
+    return;
+  }
   logEvent("server:start", {
     transport: "stdio",
     cwd: process.cwd(),
@@ -654,6 +864,7 @@ export async function main(): Promise<void> {
     db: maskUri(process.env.MONGODB_URI),
     logFile: logFile ?? null,
   });
+  await connectDb();
   const server = buildServer();
   await server.connect(new StdioServerTransport());
   logEvent("server:connected", { transport: "stdio" });

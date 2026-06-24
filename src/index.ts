@@ -19,6 +19,7 @@ export { initIndexes } from "./db/indexes.js";
 export { MemoryStore } from "./memory/store.js";
 export { Classifier } from "./memory/classifier.js";
 export { Synthesizer } from "./memory/synthesizer.js";
+export { hydrate, summarizeSession, TRIGGER_CATEGORIES } from "./memory/lifecycle.js";
 export { getProvider, estimateTokens } from "./providers/base.js";
 export type { Provider, ChatTurn } from "./providers/base.js";
 export { runAgent, buildGraph } from "./orchestration/graph.js";
@@ -31,3 +32,10 @@ export { loadConventions } from "./conventions/loader.js";
 export { getAdapter, loadCanon } from "./adapters/base.js";
 export { EvalRunner } from "./eval/runner.js";
 export { buildServer } from "./mcpserver/server.js";
+export { DefinitionStore } from "./projectctx/store.js";
+export {
+  AGENTS_COLLECTION,
+  SKILLS_COLLECTION,
+  makeDefinitionRecord,
+} from "./projectctx/schemas.js";
+export type { DefinitionKind, DefinitionRecord } from "./projectctx/schemas.js";
