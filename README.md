@@ -1,7 +1,8 @@
 # AITL-Harness-JS
 
 Port TypeScript de AITL-Harness: CLI global, servidor MCP, memoria durable en MongoDB,
-providers LLM, repomap, ADR sync, UI web de memoria y panel interactivo.
+modelos via OpenRouter, hosts de agente (Codex/Claude Code/Antigravity), repomap, ADR sync,
+UI web de memoria y panel interactivo.
 
 El binario publico es `aitl`.
 
@@ -19,15 +20,15 @@ aitl --help
 
 ### Desde npm
 
-El paquete queda preparado para publicarse como `aitl-js`:
+El paquete queda preparado para publicarse como `aitl-mcp`:
 
 ```powershell
-npm install -g aitl-js
+npm install -g aitl-mcp
 aitl --help
 ```
 
-Si el nombre `aitl-js` no estuviera disponible en npm, publica bajo un scope
-(`@tu-scope/aitl-js`) y conserva el mismo binario `aitl`.
+Si el nombre `aitl-mcp` no estuviera disponible en npm, publica bajo un scope
+(`@tu-scope/aitl-mcp`) y conserva el mismo binario `aitl`.
 
 ### Verificar instalacion
 
@@ -49,22 +50,24 @@ aitl config set MONGODB_URI "mongodb://localhost:27018/?directConnection=true"
 aitl config set MONGODB_DB aitl
 ```
 
-Para usar Google free tier:
+Para usar modelos via OpenRouter (unico provider de modelo; gateway compatible con OpenAI):
 
 ```powershell
-aitl config set GEMINI_API_KEY "<google-ai-studio-key>"
-aitl run "resume el proyecto" --project demo --model google-free
+aitl config set OPENROUTER_API_KEY "<openrouter-key>"
+aitl config set OPENROUTER_MODEL "anthropic/claude-3.5-sonnet"
+aitl run "resume el proyecto" --project demo --model openrouter
 ```
 
-Mas detalle: [docs/GOOGLE-FREE.md](docs/GOOGLE-FREE.md).
+Los model ids de OpenRouter son namespaced, por ejemplo `anthropic/claude-3.5-sonnet`,
+`google/gemini-2.0-flash-exp:free` o `openrouter/auto`.
 
-Para usar otro provider:
+Para correr el harness SOBRE un agente-host (en vez de un modelo crudo):
 
 ```powershell
-aitl config set OPENAI_API_KEY "<key>"
-aitl config set MODEL_SECONDARY openai
-aitl run "haz una tarea" --project demo --model secondary
+aitl run-host "haz una tarea" --project demo --host claude-code
 ```
+
+El harness envuelve al host con contexto durable y telemetria. Hosts: `claude-code`, `codex`, `antigravity`.
 
 ## Comandos principales
 
@@ -76,7 +79,9 @@ aitl run "haz una tarea" --project demo --model secondary
 | `aitl init-db` | Crea colecciones e indices. |
 | `aitl ingest --path docs --project demo` | Ingiere memoria markdown. |
 | `aitl search "query" --project demo` | Busca en memoria durable. |
-| `aitl run "task" --project demo --model google-free` | Ejecuta el loop agente. |
+| `aitl run "task" --project demo --model openrouter` | Ejecuta el loop agente (modelos via OpenRouter). |
+| `aitl run-host "task" --project demo --host claude-code` | Corre la tarea SOBRE un agente-host (Codex/Claude Code/Antigravity). |
+| `aitl orchestrate "task" --project demo` | Descompone la tarea y corre sub-agentes en paralelo. |
 | `aitl repomap --root . --project demo` | Construye mapa de repo. |
 | `aitl adr-sync --dir docs/adr --project demo` | Espeja ADRs en Mongo. |
 | `aitl export --adapter cursor --project demo` | Proyecta canon a herramientas externas. |

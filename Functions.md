@@ -112,12 +112,27 @@ Tools built-in: `ReadFileTool`, `WriteFileTool`, `ShellTool`.
 
 | Función | Firma | Qué hace |
 |---|---|---|
-| `getProvider` | `(which?) => Promise<Provider>` | Resuelve un provider por rol/nombre (gemini, google-free, openai, **openrouter**, anthropic). OpenRouter reusa `OpenAIProvider` con `baseURL` propio. |
+| `getProvider` | `(which?) => Promise<Provider>` | Resuelve el provider de modelo. **Unico provider: `openrouter`** (gateway OpenAI-compatible para todos los modelos). `OpenAIProvider` es el cliente generico que lo respalda via `baseURL`. |
 | `estimateTokens` | `(text) => number` | Estimación ~4 chars/token compartida. |
 | `getEmbedder` | `() => Embedder` | Backend de embeddings (local MiniLM-384 por defecto, Voyage opt-in). |
 | `embedOne` | `(text) => Promise<number[]>` | Embebe un texto en un vector. |
 
 `Provider` (interfaz): `complete(prompt, opts?)` · `chat(messages, opts?)` · `countTokens(text)` · `capabilities()`.
+
+### Hosts — el harness corriendo SOBRE otro agente (Cara B)
+
+A diferencia de un `Provider` (modelo crudo que el harness conduce con su loop), un **host** es un
+agente completo con su propio loop (Codex, Claude Code, Antigravity). El harness lo **envuelve**:
+le inyecta contexto durable y persiste la corrida.
+
+| Función | Firma | Qué hace |
+|---|---|---|
+| `runOnHost` | `(prompt, project, opts) => Promise<RunOnHostResult>` | Corre una tarea SOBRE un host: hidrata contexto en el prompt, invoca el host, persiste run (role `host`) + transcript + eventos. |
+| `getHost` | `(name) => HostAdapter` | Resuelve un host conocido (`claude-code`/`codex`/`antigravity`); comando override por `AITL_HOST_CMD_<NAME>`. |
+| `HOST_SPECS` | `Record<string, CliHostSpec>` | Invocaciones headless por defecto de cada host (provisionales, overridables). |
+
+`HostAdapter` (interfaz): `runTask(prompt, opts?) => Promise<HostResult>`. `CliHostAdapter` la
+implementa via subproceso (prompt por stdin).
 
 ---
 
@@ -176,7 +191,7 @@ Precedencia: `process.env` > `~/.aitl/config.json` > defaults.
 
 ## 12. Comandos del CLI (`aitl <cmd>`)
 
-`interactive` · `check-db` · `init-db` · `ingest` · `search` · **`run`** · **`orchestrate`** ·
+`interactive` · `check-db` · `init-db` · `ingest` · `search` · **`run`** · **`run-host`** · **`orchestrate`** ·
 `synthesize` · `repomap` · `adr-sync` · `export` · `eval` · `mcp` · `config {path,show,export,import,set,unset}` ·
 `ui` · `prompt {add,list,search}` · `init agent` · `migrate-atlas`.
 

@@ -46,7 +46,15 @@ interface Service {
 
 interface MenuItem {
   label: string;
-  run: () => void | Promise<void>;
+  /** Leaf action. Omitted when the item opens a submenu. */
+  run?: () => void | Promise<void>;
+  /** When present, selecting this item descends into a submenu. */
+  submenu?: () => MenuItem[];
+}
+
+interface MenuLevel {
+  title: string;
+  items: () => MenuItem[];
 }
 
 /** Split a command line into argv, respecting single/double quotes. */
@@ -70,6 +78,8 @@ export async function runInteractive(): Promise<void> {
   const logs: string[] = [];
   let selected = 0;
   let mode: "menu" | "busy" = "menu";
+  // Session default project, injected into command prefills so they never miss --project.
+  let project = process.env.AITL_PROJECT?.trim() || "default";
 
   const pushLog = (line: string) => {
     for (const l of line.replace(/\r/g, "").split("\n")) {
@@ -179,6 +189,22 @@ export async function runInteractive(): Promise<void> {
         }),
     );
 
+  /** Prompt for the session default project (baked into command prefills). */
+  const setProject = () =>
+    suspend(
+      () =>
+        new Promise<void>((resolve) => {
+          const rl = createInterface({ input: stdin, output: stdout });
+          stdout.write(`${CLEAR}${BOLD}Default project${RESET} ${DIM}(empty to keep "${project}")${RESET}\n`);
+          rl.question("project: ", (answer) => {
+            rl.close();
+            const p = answer.trim();
+            if (p) project = p;
+            resolve();
+          });
+        }),
+    );
+
   let quitting = false;
   /** Synchronously stop every service. Idempotent — safe to call from any signal/exit. */
   const cleanup = () => {
@@ -195,27 +221,76 @@ export async function runInteractive(): Promise<void> {
     process.exit(0);
   };
 
-  const menu = (): MenuItem[] => {
-    const items: MenuItem[] = services.map((svc) => ({
+  // ── menu tree (submenus + "Go Back") ──────────────────────────────────────
+  const servicesMenu = (): MenuItem[] =>
+    services.map((svc) => ({
       label: svc.child ? `Stop ${svc.label}` : `Start ${svc.label}`,
       run: () => (svc.child ? stopService(svc) : startService(svc)),
     }));
-    items.push(
-      { label: "Search memory", run: () => commandMode("search ") },
-      { label: "Run task", run: () => commandMode('run "" --project ') },
-      { label: "Init DB", run: () => runAttached(["init-db"]) },
-      { label: "Config: show", run: () => runAttached(["config", "show"]) },
+  const memoryMenu = (): MenuItem[] => [
+    { label: "Search memory", run: () => commandMode(`search --project ${project} `) },
+    { label: "Run task", run: () => commandMode(`run --project ${project} "`) },
+    { label: "Run on host", run: () => commandMode(`run-host --project ${project} --host claude-code "`) },
+    { label: "Orchestrate task", run: () => commandMode(`orchestrate --project ${project} "`) },
+  ];
+  const databaseMenu = (): MenuItem[] => [
+    { label: "Check DB", run: () => runAttached(["check-db"]) },
+    { label: "Init DB", run: () => runAttached(["init-db"]) },
+  ];
+  const configMenu = (): MenuItem[] => [
+    { label: "Config: show", run: () => runAttached(["config", "show"]) },
+    { label: "Config: path", run: () => runAttached(["config", "path"]) },
+  ];
+
+  const rootLevel: MenuLevel = {
+    title: "interactive",
+    items: () => [
+      { label: "Services ▸", submenu: servicesMenu },
+      { label: "Memory ▸", submenu: memoryMenu },
+      { label: "Database ▸", submenu: databaseMenu },
+      { label: "Config ▸", submenu: configMenu },
+      { label: `Project: ${project} (p)`, run: setProject },
       { label: "Type a command (:)", run: () => commandMode() },
       { label: "Quit (q)", run: quit },
-    );
-    return items;
+    ],
+  };
+
+  // Navigation stack: the last level is the one on screen. Back = pop.
+  const stack: MenuLevel[] = [rootLevel];
+  const currentLevel = (): MenuLevel => stack[stack.length - 1];
+
+  /** Current level's items, with a "← Back" entry appended inside any submenu. */
+  const currentItems = (): MenuItem[] => {
+    const items = currentLevel().items();
+    return stack.length > 1 ? [...items, { label: `${GRAY}← Back${RESET}`, run: goBack }] : items;
+  };
+
+  /** Enter a submenu, or run a leaf action. */
+  const enter = (item: MenuItem | undefined): void => {
+    if (!item) return;
+    if (item.submenu) {
+      stack.push({ title: item.label.replace(/\s*▸\s*$/, ""), items: item.submenu });
+      selected = 0;
+      render();
+    } else {
+      void item.run?.();
+    }
+  };
+
+  /** Go back one menu level. No-op at the root. */
+  const goBack = (): void => {
+    if (stack.length <= 1) return;
+    stack.pop();
+    selected = 0;
+    render();
   };
 
   function render(): void {
-    const items = menu();
-    if (selected >= items.length) selected = items.length - 1;
+    const items = currentItems();
+    if (selected >= items.length) selected = Math.max(0, items.length - 1);
     const lines: string[] = [];
-    lines.push(`${BOLD}AITL · interactive${RESET}`, "");
+    const crumb = stack.map((l) => l.title).join(`${RESET}${GRAY} › ${BOLD}`);
+    lines.push(`${BOLD}AITL · ${crumb}${RESET}   ${DIM}project: ${project}${RESET}`, "");
     for (const svc of services) {
       const dot = svc.status === "running" ? `${GREEN}●${RESET}` : `${GRAY}○${RESET}`;
       lines.push(`  ${dot} ${svc.label.padEnd(18)} ${DIM}${svc.status}${RESET}`);
@@ -232,14 +307,14 @@ export async function runInteractive(): Promise<void> {
     }
     lines.push(
       "",
-      `${DIM}  ↑↓ navigate · Enter select · 1-9 jump · : command · q quit${RESET}`,
+      `${DIM}  ↑↓ navigate · Enter select · 1-9 jump${stack.length > 1 ? " · Esc/← back" : ""} · p project · : command · q quit${RESET}`,
     );
     stdout.write(CLEAR + lines.join("\n") + "\n");
   }
 
   function onKeypress(_str: string, key: { name?: string; ctrl?: boolean; sequence?: string }): void {
     if (mode !== "menu") return;
-    const items = menu();
+    const items = currentItems();
     if (key.ctrl && key.name === "c") return quit();
     switch (key.name) {
       case "up":
@@ -249,20 +324,25 @@ export async function runInteractive(): Promise<void> {
         selected = (selected + 1) % items.length;
         return render();
       case "return":
-        void items[selected]?.run();
-        return;
+        return enter(items[selected]);
+      case "escape":
+      case "backspace":
+        return goBack();
+      case "left":
+        if (stack.length > 1) return goBack();
+        break;
       case "q":
         return quit();
       default:
         break;
     }
     if (key.sequence === ":") return void commandMode();
+    if (key.sequence === "p") return void setProject();
     if (key.sequence && /^[1-9]$/.test(key.sequence)) {
       const idx = Number(key.sequence) - 1;
       if (idx < items.length) {
         selected = idx;
-        render();
-        void items[idx].run();
+        enter(items[idx]);
       }
     }
   }
