@@ -148,15 +148,12 @@ program
   .action(async (task, opts) => {
     const { runAgent } = await import("./orchestration/graph.js");
     const { getProvider } = await import("./providers/base.js");
-    const { defaultRegistry } = await import("./tools/base.js");
-    const { ReadFileTool, WriteFileTool } = await import("./tools/filesystem.js");
-    const { ShellTool } = await import("./tools/shell.js");
-    const { installDefaultGates } = await import("./hooks/gates.js");
-    for (const t of [new ReadFileTool(), new WriteFileTool(), new ShellTool()]) defaultRegistry.register(t);
-    installDefaultGates(defaultRegistry);
-
-    const result = await runAgent(task, opts.project, { provider: await getProvider(opts.model) });
-    console.log(`run_id=${result.run_id} iters=${result.iters}`);
+    // Tools + default safety gates are now installed by runAgent itself (see #1 enforcement).
+    const result = await runAgent(task, opts.project, {
+      provider: await getProvider(opts.model),
+      installDefaultTools: true,
+    });
+    console.log(`run_id=${result.run_id} iters=${result.iters} gate_denials=${result.gate_denials}`);
     console.log(result.final_text);
     await closeClient();
   });

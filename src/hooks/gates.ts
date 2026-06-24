@@ -50,7 +50,12 @@ export class PhaseGate {
   }
 }
 
-/** Sensible defaults: protect VCS internals and secrets from writes. */
+// Registries that already have the default gates, so re-installing is a no-op.
+const _withDefaults = new WeakSet<ToolRegistry>();
+
+/** Sensible defaults: protect VCS internals and secrets from writes. Idempotent per registry. */
 export function installDefaultGates(registry: ToolRegistry = defaultRegistry): void {
+  if (_withDefaults.has(registry)) return;
+  _withDefaults.add(registry);
   registry.addGate(denyPathsGate([".git/*", "*.env", "*.pem", "*id_rsa*"]));
 }

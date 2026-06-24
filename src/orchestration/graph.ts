@@ -17,6 +17,7 @@ import { MemoryStore } from "../memory/store.js";
 import { routeSkills } from "../projectctx/router.js";
 import { DefinitionStore } from "../projectctx/store.js";
 import { type Provider, getProvider } from "../providers/base.js";
+import { denyPathsGate, installDefaultGates } from "../hooks/gates.js";
 import { type ToolRegistry, defaultRegistry } from "../tools/base.js";
 
 export interface RunAgentOpts {
@@ -31,6 +32,12 @@ export interface RunAgentOpts {
   skills?: boolean;
   /** Write a classified session summary to memory at session end (default true). */
   summarize?: boolean;
+  /** Install default safety gates (deny writes to .git/.env/keys) on the registry (default true). */
+  gates?: boolean;
+  /** Extra path/command deny patterns, added as a project-policy gate. */
+  denyPaths?: string[];
+  /** Register the built-in Read/Write/Shell tools before running (default false). */
+  installDefaultTools?: boolean;
 }
 
 export interface RunAgentResult {
@@ -41,6 +48,8 @@ export interface RunAgentResult {
   summary_slug?: string;
   /** Names of the project skills injected into the system prompt at start. */
   selected_skills?: string[];
+  /** Number of tool calls blocked by a permission gate during the run. */
+  gate_denials?: number;
 }
 
 /** Run one agent task to completion. */
@@ -54,6 +63,19 @@ export async function runAgent(
   const registry = opts.registry ?? defaultRegistry;
   const maxIters = opts.maxIters ?? 12;
   const ctx = new ContextManager(undefined, provider);
+
+  // ── enforcement setup: tools + deterministic permission gates, owned by the loop ──
+  // Default safety gates are on unless explicitly disabled, so `runAgent` is safe even
+  // when used as a library (not just via the CLI).
+  if (opts.installDefaultTools) {
+    const { ReadFileTool, WriteFileTool } = await import("../tools/filesystem.js");
+    const { ShellTool } = await import("../tools/shell.js");
+    for (const t of [new ReadFileTool(), new WriteFileTool(), new ShellTool()]) registry.register(t);
+  }
+  if (opts.gates !== false) {
+    installDefaultGates(registry); // idempotent per registry
+    if (opts.denyPaths?.length) registry.addGate(denyPathsGate(opts.denyPaths));
+  }
 
   const runId = randomUUID();
   const run = makeRun({ project, model: provider.name, harness_config: { max_iters: maxIters } });
@@ -93,6 +115,7 @@ export async function runAgent(
   );
 
   let finalText = "";
+  let gateDenials = 0;
   let it = 0;
   for (; it < maxIters; it++) {
     if (ctx.overBudget(convo)) {
@@ -120,14 +143,30 @@ export async function runAgent(
 
     convo.push({ role: "assistant", content: turn.text, tool_calls: turn.tool_calls });
     for (const call of turn.tool_calls) {
-      const result = await registry.call(call.name, call.input ?? {});
+      let denyReason: string | null = null;
+      const result = await registry.call(call.name, call.input ?? {}, (reason) => {
+        denyReason = reason;
+      });
       idx += 1;
       await store.appendMessage(
         makeMessage({ project, run_id: runId, idx, role: "tool", content: result }),
       );
-      await store.logEvent(
-        makeEvent({ project, run_id: runId, type: "tool_call", payload: { name: call.name } }),
-      );
+      // Audit: a denied call emits a `gate` event (it never ran); an allowed call a `tool_call`.
+      if (denyReason !== null) {
+        gateDenials += 1;
+        await store.logEvent(
+          makeEvent({
+            project,
+            run_id: runId,
+            type: "gate",
+            payload: { name: call.name, decision: "deny", reason: denyReason },
+          }),
+        );
+      } else {
+        await store.logEvent(
+          makeEvent({ project, run_id: runId, type: "tool_call", payload: { name: call.name } }),
+        );
+      }
       convo.push({ role: "tool", tool_call_id: call.id, content: result });
     }
   }
@@ -157,6 +196,7 @@ export async function runAgent(
     iters: it + 1,
     summary_slug: summarySlug,
     selected_skills: selectedSkills,
+    gate_denials: gateDenials,
   };
 }
 

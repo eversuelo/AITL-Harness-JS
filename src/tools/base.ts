@@ -44,10 +44,27 @@ export class ToolRegistry {
     return [...this.tools.values()].map(toolSchema);
   }
 
-  async call(name: string, args: Record<string, unknown>): Promise<string> {
+  /** Whether any permission gate is installed (used to avoid double-installing defaults). */
+  hasGates(): boolean {
+    return this.gates.length > 0;
+  }
+
+  /**
+   * Run a tool through the permission gates. If a gate denies, `onDeny(reason)` is
+   * invoked (for audit) and a `[denied by gate]` string is returned so the caller can
+   * feed it back to the model — the tool never executes.
+   */
+  async call(
+    name: string,
+    args: Record<string, unknown>,
+    onDeny?: (reason: string) => void,
+  ): Promise<string> {
     for (const gate of this.gates) {
       const [allowed, reason] = gate(name, args);
-      if (!allowed) return `[denied by gate] ${reason}`;
+      if (!allowed) {
+        onDeny?.(reason);
+        return `[denied by gate] ${reason}`;
+      }
     }
     const tool = this.tools.get(name);
     if (tool === undefined) return `[error] unknown tool '${name}'`;
