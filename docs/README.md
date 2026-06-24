@@ -5,10 +5,11 @@ Indice de lectura para explorar AITL-Harness-JS en GitHub.
 ## Lectura recomendada
 
 1. [../README.md](../README.md): instalacion, comandos y mapa general.
-2. [adr/README.md](adr/README.md): decisiones de arquitectura.
-3. [PARITY.md](PARITY.md): estado de paridad con el port Python.
-4. [MONGODB-ATLAS.md](MONGODB-ATLAS.md): setup de Mongo local/cloud.
-5. [GOOGLE-FREE.md](GOOGLE-FREE.md): provider `google-free` / `gemini-free`.
+2. [ARQUITECTURA-AITL-JS.md](ARQUITECTURA-AITL-JS.md): resumen con diagramas Mermaid, brechas y mejoras.
+3. [adr/README.md](adr/README.md): decisiones de arquitectura.
+4. [PARITY.md](PARITY.md): estado de paridad con el port Python.
+5. [MONGODB-ATLAS.md](MONGODB-ATLAS.md): setup de Mongo local/cloud.
+6. [GOOGLE-FREE.md](GOOGLE-FREE.md): provider `google-free` / `gemini-free`.
 
 ## ADRs
 
