@@ -146,9 +146,9 @@ export async function runAgent(
   let selectedSkills: string[] = [];
   if (opts.hydrate !== false) {
     try {
-      const { preamble, count } = await hydrate(project, promptText, { store });
+      const { preamble, sections } = await hydrate(project, promptText, { store });
       if (preamble) preambles.push(preamble);
-      await store.logEvent(makeEvent({ project, run_id: runId, type: "hydrate", payload: { recovered: count } }));
+      await store.logEvent(makeEvent({ project, run_id: runId, type: "hydrate", payload: { ...sections } }));
     } catch {
       // Hydration is best-effort; never block the run.
     }

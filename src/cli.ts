@@ -159,6 +159,27 @@ program
   });
 
 program
+  .command("orchestrate")
+  .argument("<task>", "Master task prompt.")
+  .requiredOption("--project <project>", "Project scope.")
+  .option("--model <m>", "primary | secondary | gemini | google-free | gemini-free | openai | anthropic", "primary")
+  .option("--max <n>", "Max parallel sub-agents.", "4")
+  .description("Decompose a task, run sub-agents in parallel, and synthesize the result.")
+  .action(async (task, opts) => {
+    const { orchestrate } = await import("./orchestration/orchestrator.js");
+    const { getProvider } = await import("./providers/base.js");
+    const result = await orchestrate(task, opts.project, {
+      provider: await getProvider(opts.model),
+      maxSubagents: Number(opts.max),
+      subAgentOpts: { installDefaultTools: true },
+    });
+    console.log(`run_id=${result.run_id} subagents=${result.subagents.length}`);
+    for (const s of result.subagents) console.log(`  [${s.status}] ${s.task}`);
+    console.log("\n" + result.final_text);
+    await closeClient();
+  });
+
+program
   .command("synthesize")
   .requiredOption("--project <project>", "Project scope.")
   .option("--force", "Synthesize even if under the limit.", false)

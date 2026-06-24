@@ -97,6 +97,290 @@ Tools principales:
 | `list_decisions` / `record_decision` | Lee y registra ADRs. |
 | `get_repomap` / `graphify` | Expone mapa de repo y grafo del estado durable. |
 
+### Tutorial rapido: usar el MCP del harness
+
+El flujo recomendado es:
+
+1. Configurar MongoDB.
+2. Crear colecciones e indices.
+3. Registrar el servidor MCP `aitl-js` en tu cliente/agente.
+4. Hacer que el agente consulte y escriba memoria durable antes/despues de decisiones.
+
+#### 1. Configura la base durable
+
+Si usas instalacion global, guarda la configuracion en `~/.aitl/config.json`:
+
+```powershell
+aitl config set MONGODB_URI "mongodb://localhost:27018/?directConnection=true"
+aitl config set MONGODB_DB aitl
+aitl config set EMBEDDING_PROVIDER local
+aitl config set EMBEDDING_MODEL "Xenova/all-MiniLM-L6-v2"
+aitl config set EMBEDDING_DIMS 384
+```
+
+Para Atlas, usa tu connection string de Atlas en `MONGODB_URI`. No lo guardes en git.
+
+Valida conexion y prepara indices:
+
+```powershell
+aitl check-db
+aitl init-db
+```
+
+#### 2. Prueba el servidor MCP manualmente
+
+Para una instalacion global:
+
+```powershell
+aitl mcp
+```
+
+Para desarrollo desde este checkout:
+
+```powershell
+pnpm build
+node dist/src/mcpserver/server.js
+```
+
+El transporte por defecto es `stdio`, que es lo que usan la mayoria de clientes MCP.
+Los logs diagnosticos salen por `stderr`, para no contaminar el protocolo MCP.
+
+#### 3. Registra `aitl-js` en tu cliente MCP
+
+Si el paquete esta instalado globalmente y ya configuraste `aitl config`, la forma mas
+portable es:
+
+```json
+{
+  "mcpServers": {
+    "aitl-js": {
+      "command": "aitl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Si prefieres no depender del perfil global, puedes pasar variables de entorno al servidor:
+
+```json
+{
+  "mcpServers": {
+    "aitl-js": {
+      "command": "aitl",
+      "args": ["mcp"],
+      "env": {
+        "MONGODB_URI": "mongodb://USER:PASS@HOSTS/aitl?ssl=true&authSource=admin&replicaSet=...",
+        "MONGODB_DB": "aitl",
+        "EMBEDDING_PROVIDER": "local",
+        "EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2",
+        "EMBEDDING_DIMS": "384",
+        "AITL_MCP_LOG_FILE": "logs/aitl-js-mcp.log",
+        "AITL_MCP_LOG_RESULT_CHARS": "8000"
+      }
+    }
+  }
+}
+```
+
+En desarrollo local, tambien puedes apuntar directo al build:
+
+```json
+{
+  "mcpServers": {
+    "aitl-js": {
+      "command": "node",
+      "args": ["C:/ruta/a/AITL-Harness-JS/dist/src/mcpserver/server.js"],
+      "env": {
+        "MONGODB_URI": "mongodb://localhost:27018/?directConnection=true",
+        "MONGODB_DB": "aitl"
+      }
+    }
+  }
+}
+```
+
+La ubicacion exacta del archivo de configuracion depende del cliente MCP. En clientes que
+leen configuracion por workspace, coloca el bloque anterior en el `.mcp.json` del repo o
+en el archivo equivalente que use tu agente.
+
+El nombre dentro de `mcpServers` es solo un alias del cliente. Puede llamarse `aitl-js`,
+`aitl-mcp`, `memory`, o como prefieras. Lo importante es usar el mismo nombre cuando
+instruyas al agente o generes `AGENTS.md`.
+
+Ejemplo si en otra computadora lo registraste como `aitl-mcp`:
+
+```json
+{
+  "mcpServers": {
+    "aitl-mcp": {
+      "command": "aitl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### 4. Primer uso desde un agente
+
+Una vez conectado, pide al agente que use el alias del servidor MCP con un proyecto fijo:
+
+```text
+Usa el MCP aitl-js con project="demo".
+Antes de proponer cambios, consulta search_memory y list_decisions.
+Si aprendes una decision o convencion nueva, guardala con write_memory o record_decision.
+```
+
+Si el alias del server en esa maquina es `aitl-mcp`, la instruccion debe coincidir:
+
+```text
+Usa el MCP aitl-mcp con project="demo".
+Antes de proponer cambios, consulta search_memory y list_decisions.
+Si aprendes una decision o convencion nueva, guardala con write_memory o record_decision.
+```
+
+Ejemplos de operaciones utiles:
+
+| Objetivo | Tool MCP |
+|---|---|
+| Recordar contexto previo | `search_memory` con `project` y `query`. |
+| Guardar una nota durable | `write_memory` con `project`, `slug`, `type`, `description`, `body`. |
+| Ver decisiones aceptadas | `list_decisions`. |
+| Registrar una decision | `record_decision` con Context / Decision / Consequences. |
+| Guardar el prompt de trabajo | `record_prompt`. |
+| Guardar un snapshot de conversacion/contexto | `save_mcp_context`. |
+| Explorar estructura de codigo | `get_repomap` o `graphify`. |
+| Guardar instrucciones reutilizables | `write_agent` o `write_skill`. |
+
+### Como anadir el Harness MCP a agentes
+
+Hay dos capas: conectar el servidor MCP al cliente y dejar instrucciones durables para
+que cualquier agente lo use correctamente.
+
+#### A. Conecta el servidor MCP
+
+Registra un server en el cliente MCP del agente usando uno de estos formatos. El nombre
+`aitl-js` es un alias; puedes cambiarlo por `aitl-mcp` si asi se llama en esa compu:
+
+```json
+{
+  "mcpServers": {
+    "aitl-js": {
+      "command": "aitl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+El mismo ejemplo con alias `aitl-mcp`:
+
+```json
+{
+  "mcpServers": {
+    "aitl-mcp": {
+      "command": "aitl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+o, si trabajas desde el checkout sin instalacion global:
+
+```json
+{
+  "mcpServers": {
+    "aitl-js": {
+      "command": "node",
+      "args": ["./AITL-Harness-JS/dist/src/mcpserver/server.js"]
+    }
+  }
+}
+```
+
+Usa rutas absolutas si el cliente MCP no arranca desde la raiz del workspace.
+
+#### B. Genera un `AGENTS.md` para obligar al agente a consultar el MCP
+
+Desde el repo donde trabajara el agente:
+
+```powershell
+aitl init agent --project demo --mcp aitl-js --out AGENTS.md
+```
+
+Si el cliente MCP lo conoce como `aitl-mcp`, genera el contrato con ese nombre:
+
+```powershell
+aitl init agent --project demo --mcp aitl-mcp --out AGENTS.md
+```
+
+Ese archivo instruye al agente a:
+
+- consultar `search_memory`, `list_decisions` y `get_repomap` antes de decisiones no triviales;
+- persistir aprendizajes con `write_memory`;
+- registrar decisiones con `record_decision`;
+- mantener el scope `project` consistente.
+
+Tambien puedes hacerlo interactivo:
+
+```powershell
+aitl init agent --interactive
+```
+
+#### C. Guarda agentes y skills dentro del MCP
+
+El MCP tambien tiene colecciones durables para definiciones reutilizables:
+
+- `write_agent`, `get_agent`, `list_agents`, `search_agents`, `delete_agent`
+- `write_skill`, `get_skill`, `list_skills`, `search_skills`, `delete_skill`
+
+Ejemplo de instruccion para un cliente MCP:
+
+```text
+En el MCP aitl-js, guarda un skill para project="demo" llamado "code-review"
+que indique revisar diffs buscando bugs, regresiones y pruebas faltantes.
+```
+
+Durante `aitl run`, el router de skills busca skills relevantes del proyecto y los inyecta
+en el prompt del agente de forma best-effort.
+
+#### D. Checklist de verificacion
+
+```powershell
+aitl check-db
+aitl init-db
+aitl mcp
+```
+
+En el cliente MCP, confirma que aparecen tools como `search_memory`, `write_memory`,
+`list_decisions`, `record_prompt`, `write_agent` y `write_skill`.
+
+Para ver lo que el MCP va guardando:
+
+```powershell
+aitl ui --project demo
+aitl prompt list --project demo
+aitl search "decision" --project demo
+```
+
+### MCP por HTTP
+
+Para clientes remotos o tuneles, `aitl mcp` tambien puede usar Streamable HTTP:
+
+```powershell
+aitl mcp --http --host 127.0.0.1 --port 8000 --path /mcp --token "<token>"
+```
+
+Usa `--token` si expones el servidor fuera de localhost. Para internet publica, ponlo
+detras de TLS/proxy y evita exponer MongoDB directamente.
+
+Nota importante: cuando configuras MCP por `stdio`, el cliente/agente ejecuta el
+`command` en su misma maquina. Si el harness esta instalado en otra computadora y quieres
+usarlo desde un agente remoto, arranca el MCP con `--http` en la computadora que hospeda
+AITL y configura el cliente remoto con la URL que soporte tu cliente MCP. El alias puede
+seguir siendo `aitl-mcp`; solo cambia el transporte.
+
 ## Mapa de contenido
 
 | Ruta | Contenido |

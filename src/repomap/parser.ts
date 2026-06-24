@@ -6,8 +6,9 @@
  * dependency graph. web-tree-sitter loads prebuilt `.wasm` grammars, so this
  * generalizes beyond any single language.
  *
- * NOTE: grammar `.wasm` files must be provided (see `loadLanguage`). Until they are
- * wired up, `parseFile` degrades gracefully to an empty FileSymbols (TODO: phase 2).
+ * NOTE: grammar `.wasm` files give the most accurate parse (see `loadLanguage`). When
+ * they are unavailable, `parseFile` falls back to a keyword-based regex extractor
+ * (`parseFileHeuristic`) so the repo map still works offline (notably for this TS repo).
  */
 
 import { promises as fs } from "node:fs";
@@ -74,6 +75,61 @@ async function loadLanguage(lang: string): Promise<unknown | null> {
   }
 }
 
+// Keyword-based definition patterns: [regex, kind]. Covers TS/JS plus common
+// keywords for python/go/rust/c-family, so the heuristic fallback is broadly useful.
+const HEURISTIC_DEFS: [RegExp, string][] = [
+  [/(?:^|\s)(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/g, "function"],
+  [/(?:^|\s)(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/g, "class"],
+  [/(?:^|\s)(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/g, "interface"],
+  [/(?:^|\s)(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*[=<]/g, "type"],
+  [/(?:^|\s)(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)/g, "enum"],
+  // exported/top-level arrow functions: const NAME = (..) => / = async (..) =>
+  [/(?:^|\s)(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^;{]*\)|[A-Za-z_$][\w$]*)\s*=>/g, "const"],
+  [/(?:^|\s)def\s+([A-Za-z_$][\w$]*)\s*\(/g, "function"], // python
+  [/(?:^|\s)func\s+(?:\([^)]*\)\s*)?([A-Za-z_$][\w$]*)\s*\(/g, "function"], // go
+  [/(?:^|\s)fn\s+([A-Za-z_$][\w$]*)/g, "function"], // rust
+];
+
+const JS_KEYWORDS = new Set([
+  "const", "let", "var", "function", "class", "interface", "type", "enum", "return", "if",
+  "else", "for", "while", "switch", "case", "break", "continue", "new", "await", "async",
+  "import", "export", "default", "from", "as", "extends", "implements", "this", "super",
+  "true", "false", "null", "undefined", "void", "typeof", "instanceof", "in", "of", "try",
+  "catch", "finally", "throw", "yield", "static", "public", "private", "protected", "readonly",
+]);
+
+/**
+ * Lightweight regex extractor used when a tree-sitter grammar is unavailable.
+ * Pulls keyword-based definitions and all referenced identifiers — enough for the
+ * PageRank ranker (which only keeps refs that match definitions elsewhere).
+ */
+async function parseFileHeuristic(path: string): Promise<FileSymbols> {
+  const fsym: FileSymbols = { file: path, defs: [], refs: new Set() };
+  let src: string;
+  try {
+    src = await fs.readFile(path, "utf-8");
+  } catch {
+    return fsym;
+  }
+  // Strip block/line comments so commented-out code doesn't pollute defs/refs.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  const seen = new Set<string>();
+  for (const [re, kind] of HEURISTIC_DEFS) {
+    re.lastIndex = 0;
+    for (const m of code.matchAll(re)) {
+      const name = m[1];
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        fsym.defs.push([name, kind]);
+      }
+    }
+  }
+  for (const m of code.matchAll(/[A-Za-z_$][\w$]*/g)) {
+    if (!JS_KEYWORDS.has(m[0])) fsym.refs.add(m[0]);
+  }
+  return fsym;
+}
+
 function nodeName(node: any, src: string): string | null {
   for (const f of NAME_FIELDS) {
     const child = node.childForFieldName(f);
@@ -88,7 +144,8 @@ export async function parseFile(path: string): Promise<FileSymbols> {
   if (!lang) return fsym;
 
   const loaded = (await loadLanguage(lang)) as { Parser: any; Language: any } | null;
-  if (loaded === null) return fsym;
+  // No tree-sitter grammar wired up → fall back to the regex heuristic instead of giving up.
+  if (loaded === null) return parseFileHeuristic(path);
 
   const parser = new loaded.Parser();
   parser.setLanguage(loaded.Language);

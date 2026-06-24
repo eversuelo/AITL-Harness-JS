@@ -24,77 +24,188 @@ export const TRIGGER_CATEGORIES = new Set(["decision", "bug", "convention", "ref
 type Msg = Record<string, unknown>;
 
 /**
- * Fetch the project's most relevant memory for `prompt`.
+ * Fetch a project's most relevant docs in `collection` for `prompt`.
  *
- * Tries semantic search first, then falls back to lexical search when vector search is
- * unavailable (throws) OR returns nothing (no vector index, missing embeddings). Final
- * fallback is recent memory, so hydration still works on a fresh/un-indexed deployment.
+ * Tries semantic search first, then lexical search when vector search is unavailable
+ * (throws) OR returns nothing (no vector index, missing embeddings), then recency. So
+ * hydration works on a fresh/un-indexed deployment and across any collection.
  */
-async function relevantMemory(
+async function relevant(
   store: MemoryStore,
+  collection: string,
   project: string,
   prompt: string,
   limit: number,
 ): Promise<Record<string, unknown>[]> {
   try {
-    const hits = await store.vectorSearch("memory", await embedOne(prompt), { project, limit });
+    const hits = await store.vectorSearch(collection, await embedOne(prompt), { project, limit });
     if (hits.length > 0) return hits;
   } catch {
     // fall through to lexical
   }
   try {
-    const hits = await store.textSearch("memory", prompt, { project, limit });
+    const hits = await store.textSearch(collection, prompt, { project, limit });
     if (hits.length > 0) return hits;
   } catch {
     // fall through to recency
   }
   try {
-    return await store.listMemory(project, { limit });
+    return await store.db
+      .collection(collection)
+      .find({ project }, { projection: { embedding: 0 } })
+      .sort({ updated_at: -1 })
+      .limit(limit)
+      .toArray();
   } catch {
     return [];
   }
 }
 
-export interface HydrateResult {
-  preamble: string;
+const clip = (s: string, n: number): string => s.replace(/\s+/g, " ").trim().slice(0, n);
+
+interface Section {
+  text: string;
   count: number;
 }
 
-/**
- * Build a system preamble from the project's relevant durable memory.
- * Returns an empty preamble (count 0) when there is nothing to inject.
- */
-export async function hydrate(
-  project: string,
-  prompt: string,
-  opts: { store?: MemoryStore; limit?: number; maxChars?: number } = {},
-): Promise<HydrateResult> {
-  const store = opts.store ?? new MemoryStore();
-  const limit = opts.limit ?? 6;
-  const maxChars = opts.maxChars ?? 4000;
-
-  const hits = await relevantMemory(store, project, prompt, limit);
-  if (hits.length === 0) return { preamble: "", count: 0 };
-
-  const lines = [
-    "## Project memory (durable context recovered for this session)",
-    "Use these prior decisions, conventions and notes; do not contradict them silently.",
-    "",
-  ];
-  let budget = maxChars;
-  let used = 0;
+/** Render durable memory docs as a budgeted bullet list. */
+function renderMemory(hits: Record<string, unknown>[], cap: number): Section {
+  const lines: string[] = [];
+  let budget = cap;
   for (const h of hits) {
     const slug = String(h.slug ?? "");
     const desc = String(h.description ?? "");
     const cat = h.category ? ` (${String(h.category)})` : "";
-    const body = String(h.body ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+    const body = clip(String(h.body ?? ""), 400);
     const entry = `- [[${slug}]]${cat}: ${desc || body}${desc && body ? ` — ${body}` : ""}`;
     if (entry.length > budget) break;
     lines.push(entry);
     budget -= entry.length;
-    used += 1;
   }
-  return { preamble: lines.join("\n"), count: used };
+  if (!lines.length) return { text: "", count: 0 };
+  return {
+    text: [
+      "## Project memory (durable context recovered for this session)",
+      "Use these prior decisions, conventions and notes; do not contradict them silently.",
+      "",
+      ...lines,
+    ].join("\n"),
+    count: lines.length,
+  };
+}
+
+/** Render Architecture Decision Records as a budgeted bullet list. */
+function renderDecisions(hits: Record<string, unknown>[], cap: number): Section {
+  const lines: string[] = [];
+  let budget = cap;
+  for (const d of hits) {
+    const id = String(d.id ?? "");
+    const title = String(d.title ?? "");
+    const decision = clip(String(d.decision ?? ""), 240);
+    const entry = `- ADR ${id} — ${title}: ${decision}`;
+    if (entry.length > budget) break;
+    lines.push(entry);
+    budget -= entry.length;
+  }
+  if (!lines.length) return { text: "", count: 0 };
+  return {
+    text: ["## Architecture decisions (durable; do not contradict)", "", ...lines].join("\n"),
+    count: lines.length,
+  };
+}
+
+/** Render project conventions (rules) as a budgeted bullet list. */
+function renderConventions(rows: Record<string, unknown>[], cap: number): Section {
+  const lines: string[] = [];
+  let budget = cap;
+  for (const c of rows) {
+    const rule = clip(String(c.rule ?? ""), 200);
+    if (!rule) continue;
+    const entry = `- [${String(c.severity ?? "warn")}] ${rule}`;
+    if (entry.length > budget) break;
+    lines.push(entry);
+    budget -= entry.length;
+  }
+  if (!lines.length) return { text: "", count: 0 };
+  return {
+    text: ["## Project conventions (follow and enforce these)", "", ...lines].join("\n"),
+    count: lines.length,
+  };
+}
+
+/** Render the repo map (top symbols by PageRank). Lazily imports RepoMap to avoid the parser. */
+async function renderRepomap(store: MemoryStore, project: string, maxTokens: number): Promise<Section> {
+  try {
+    const { RepoMap } = await import("../repomap/store.js");
+    const map = await new RepoMap(store.db).render(project, { maxTokens });
+    if (!map || map.startsWith("(repo map empty")) return { text: "", count: 0 };
+    return { text: ["## Repo map (top symbols by importance)", "```", map, "```"].join("\n"), count: 1 };
+  } catch {
+    return { text: "", count: 0 };
+  }
+}
+
+export interface HydrateResult {
+  preamble: string;
+  /** Memory docs injected (kept for back-compat). */
+  count: number;
+  /** Per-source breakdown of what was injected. */
+  sections: { memory: number; decisions: number; conventions: number; repomap: number };
+}
+
+export interface HydrateOpts {
+  store?: MemoryStore;
+  limit?: number;
+  maxChars?: number;
+  memory?: boolean;
+  decisions?: boolean;
+  conventions?: boolean;
+  repomap?: boolean;
+  repomapTokens?: number;
+}
+
+/**
+ * Build a system preamble from ALL of a project's relevant durable context:
+ * memory + architecture decisions + conventions + repo map. Each source is best-effort
+ * and individually budgeted; an empty preamble means there was nothing to inject.
+ */
+export async function hydrate(
+  project: string,
+  prompt: string,
+  opts: HydrateOpts = {},
+): Promise<HydrateResult> {
+  const store = opts.store ?? new MemoryStore();
+  const parts: string[] = [];
+  const sections = { memory: 0, decisions: 0, conventions: 0, repomap: 0 };
+
+  if (opts.memory !== false) {
+    const sec = renderMemory(await relevant(store, "memory", project, prompt, opts.limit ?? 6), opts.maxChars ?? 4000);
+    if (sec.text) parts.push(sec.text);
+    sections.memory = sec.count;
+  }
+  if (opts.decisions !== false) {
+    const sec = renderDecisions(await relevant(store, "decisions", project, prompt, 4), 1800);
+    if (sec.text) parts.push(sec.text);
+    sections.decisions = sec.count;
+  }
+  if (opts.conventions !== false) {
+    let rows: Record<string, unknown>[] = [];
+    try {
+      rows = await store.db.collection("conventions").find({ project }).limit(20).toArray();
+    } catch {
+      // conventions are optional
+    }
+    const sec = renderConventions(rows, 1200);
+    if (sec.text) parts.push(sec.text);
+    sections.conventions = sec.count;
+  }
+  if (opts.repomap !== false) {
+    const sec = await renderRepomap(store, project, opts.repomapTokens ?? 400);
+    if (sec.text) parts.push(sec.text);
+    sections.repomap = sec.count;
+  }
+
+  return { preamble: parts.join("\n\n"), count: sections.memory, sections };
 }
 
 export interface SessionSummary {

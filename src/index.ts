@@ -23,6 +23,8 @@ export { hydrate, summarizeSession, TRIGGER_CATEGORIES } from "./memory/lifecycl
 export { getProvider, estimateTokens } from "./providers/base.js";
 export type { Provider, ChatTurn } from "./providers/base.js";
 export { runAgent, buildGraph } from "./orchestration/graph.js";
+export { orchestrate } from "./orchestration/orchestrator.js";
+export type { OrchestrateOpts, OrchestrateResult, SubAgentOutcome } from "./orchestration/orchestrator.js";
 export { withRetry, isTransientError } from "./util/retry.js";
 export { ContextManager } from "./context/manager.js";
 export { ToolRegistry, defaultRegistry } from "./tools/base.js";
