@@ -2,7 +2,7 @@
  * Public entry point / barrel for AITL-Harness-JS.
  *
  * Re-exports the stable surface so the package can be consumed as a library
- * (`import { runAgent, MemoryStore, getProvider } from "aitl-harness"`).
+ * (`import { runAgent, MemoryStore, getProvider } from "aitl-js"`).
  */
 
 export { settings, getSettings } from "./config.js";

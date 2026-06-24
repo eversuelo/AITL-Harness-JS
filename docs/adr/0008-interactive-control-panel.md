@@ -25,7 +25,11 @@ Build a **zero-dependency readline supervisor** at `src/interactive/menu.ts`:
   panel reuses the exact command surface in `cli.ts` with no duplicated logic.
 - Bare `aitl`, `aitl -i`, and `aitl interactive` all open the panel; a non-TTY stdin
   prints a hint and exits.
-- Windows service shutdown uses `taskkill /T` to also stop the UI's Vite grandchild.
+- **Shutdown stops every child server**: `SIGINT` (Ctrl-C), `SIGTERM` (kill), `SIGHUP`
+  (terminal/console window closed) and Windows `SIGBREAK` all run a single idempotent
+  cleanup that kills services **synchronously before the parent exits** (`spawnSync
+  taskkill /T` on Windows, tree-aware, to also stop the UI's Vite grandchild), with a
+  `process.on("exit")` backstop. So closing the terminal never leaves orphaned servers.
 
 Ink remains the choice for the richer live agent-chat TUI ([ADR-0003]/[ADR-0004]).
 
