@@ -8,6 +8,7 @@
  * are sanitized) so any MCP client can consume them. Mirrors aitl/mcpserver/server.py.
  */
 
+import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +44,7 @@ const text = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON
 
 const logFile = process.env.AITL_MCP_LOG_FILE?.trim() || undefined;
 const logChars = Number.parseInt(process.env.AITL_MCP_LOG_RESULT_CHARS ?? "4000", 10);
+const contextChars = Number.parseInt(process.env.AITL_MCP_CONTEXT_CHARS ?? "100000", 10);
 
 function isSecretKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -81,6 +83,29 @@ function preview(value: unknown): string {
   return raw.length > max ? `${raw.slice(0, max)}... [truncated ${raw.length - max} chars]` : raw;
 }
 
+function storagePreview(value: unknown): string {
+  let raw: string;
+  try {
+    raw = JSON.stringify(redact(jsonable(value)));
+  } catch {
+    raw = String(value);
+  }
+  const max = Number.isFinite(contextChars) && contextChars > 0 ? contextChars : 100000;
+  return raw.length > max ? `${raw.slice(0, max)}... [truncated ${raw.length - max} chars]` : raw;
+}
+
+function storageValue(value: unknown): unknown {
+  try {
+    const safe = redact(jsonable(value));
+    const raw = JSON.stringify(safe);
+    const max = Number.isFinite(contextChars) && contextChars > 0 ? contextChars : 100000;
+    if (raw.length > max) return { truncated: true, preview: `${raw.slice(0, max)}... [truncated ${raw.length - max} chars]` };
+    return safe;
+  } catch {
+    return String(value);
+  }
+}
+
 function errorInfo(err: unknown): Record<string, unknown> {
   if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack?.split("\n").slice(0, 4).join("\n") };
   return { message: String(err) };
@@ -105,21 +130,73 @@ function logEvent(event: string, data: Record<string, unknown> = {}): void {
   }
 }
 
+function projectFromArgs(args: Record<string, unknown>): string {
+  return typeof args.project === "string" && args.project.trim() ? args.project : process.env.AITL_MCP_PROJECT || "mcp";
+}
+
+async function persistMcpToolCall(doc: Record<string, unknown>): Promise<void> {
+  try {
+    await getDb().collection("mcp_tool_calls").insertOne(doc);
+  } catch (err) {
+    logEvent("mcp-context:error", { reason: "persist_tool_call_failed", error: errorInfo(err) });
+  }
+}
+
 async function runLogged<T>(tool: string, args: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
   logEvent("tool:start", { tool, args: preview(args) });
   try {
     const result = await fn();
-    logEvent("tool:end", { tool, ms: Date.now() - started, result: preview(result) });
+    const ms = Date.now() - started;
+    logEvent("tool:end", { tool, ms, result: preview(result) });
+    await persistMcpToolCall({
+      project: projectFromArgs(args),
+      tool,
+      ok: true,
+      args: storageValue(args),
+      args_preview: storagePreview(args),
+      result: storageValue(result),
+      result_preview: storagePreview(result),
+      ms,
+      ts: new Date(),
+    });
     return result;
   } catch (err) {
-    logEvent("tool:error", { tool, ms: Date.now() - started, error: errorInfo(err) });
+    const ms = Date.now() - started;
+    const error = errorInfo(err);
+    logEvent("tool:error", { tool, ms, error });
+    await persistMcpToolCall({
+      project: projectFromArgs(args),
+      tool,
+      ok: false,
+      args: storageValue(args),
+      args_preview: storagePreview(args),
+      error,
+      error_message: typeof error.message === "string" ? error.message : JSON.stringify(error),
+      ms,
+      ts: new Date(),
+    });
     throw err;
   }
 }
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function contextText(title: string, summary: string, messages: unknown[], context: Record<string, unknown>): string {
+  const parts = [title, summary];
+  for (const msg of messages) {
+    if (msg && typeof msg === "object") {
+      const role = "role" in msg ? String((msg as Record<string, unknown>).role ?? "") : "";
+      const content = "content" in msg ? String((msg as Record<string, unknown>).content ?? "") : JSON.stringify(msg);
+      parts.push(`${role}: ${content}`);
+    } else {
+      parts.push(String(msg));
+    }
+  }
+  if (Object.keys(context).length) parts.push(JSON.stringify(context));
+  return parts.filter(Boolean).join("\n");
 }
 
 export function buildServer(): McpServer {
@@ -189,6 +266,101 @@ export function buildServer(): McpServer {
   );
 
   // ── repo map ───────────────────────────────────────────────────────────────
+  server.tool(
+    "save_mcp_context",
+    "Persist a complete MCP context snapshot supplied by the client: messages, summary, metadata, tags and arbitrary context.",
+    {
+      project: z.string(),
+      messages: z.array(z.record(z.unknown())).default([]),
+      title: z.string().default(""),
+      summary: z.string().default(""),
+      source: z.string().default("mcp"),
+      model: z.string().optional(),
+      run_id: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      context: z.record(z.unknown()).optional(),
+      metadata: z.record(z.unknown()).optional(),
+    },
+    async ({ project, messages, title, summary, source, model, run_id, tags, context, metadata }) => {
+      return runLogged("save_mcp_context", { project, title, summary, source, model, run_id, tags, messages, context, metadata }, async () => {
+        const id = randomUUID();
+        const contextBody = context ?? {};
+        const doc = {
+          _id: id,
+          project,
+          title,
+          summary,
+          source,
+          model: model ?? null,
+          run_id: run_id ?? null,
+          tags: tags ?? [],
+          messages: storageValue(messages),
+          context: storageValue(contextBody),
+          metadata: storageValue(metadata ?? {}),
+          content_text: contextText(title, summary, messages, contextBody),
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+        await getDb().collection("mcp_context").insertOne(doc);
+        return text({ id, project, title, source, run_id: doc.run_id, messages: messages.length, tags: doc.tags, created_at: doc.created_at });
+      });
+    },
+  );
+
+  server.tool(
+    "list_mcp_context",
+    "List saved MCP context snapshots for a project, newest first.",
+    {
+      project: z.string(),
+      limit: z.number().int().min(1).max(200).default(50),
+      source: z.string().optional(),
+      tag: z.string().optional(),
+      run_id: z.string().optional(),
+    },
+    async ({ project, limit, source, tag, run_id }) => {
+      return runLogged("list_mcp_context", { project, limit, source, tag, run_id }, async () => {
+        const query: Record<string, unknown> = { project };
+        if (source) query.source = source;
+        if (tag) query.tags = tag;
+        if (run_id) query.run_id = run_id;
+        const rows = await getDb()
+          .collection("mcp_context")
+          .find(query, { projection: { content_text: 0 } })
+          .sort({ created_at: -1 })
+          .limit(limit)
+          .toArray();
+        return text(rows.map(jsonable));
+      });
+    },
+  );
+
+  server.tool(
+    "search_mcp_context",
+    "Search saved MCP context snapshots by text for a project.",
+    { project: z.string(), query: z.string(), limit: z.number().int().min(1).max(50).default(10) },
+    async ({ project, query, limit }) => {
+      return runLogged("search_mcp_context", { project, query, limit }, async () => {
+        const coll = getDb().collection("mcp_context");
+        let rows: unknown[];
+        try {
+          rows = await coll
+            .find({ project, $text: { $search: query } }, { projection: { score: { $meta: "textScore" }, content_text: 0 } })
+            .sort({ score: { $meta: "textScore" }, created_at: -1 })
+            .limit(limit)
+            .toArray();
+        } catch {
+          const rx = new RegExp(escapeRegex(query), "i");
+          rows = await coll
+            .find({ project, $or: [{ title: rx }, { summary: rx }, { content_text: rx }] }, { projection: { content_text: 0 } })
+            .sort({ created_at: -1 })
+            .limit(limit)
+            .toArray();
+        }
+        return text(rows.map(jsonable));
+      });
+    },
+  );
+
   server.tool(
     "record_prompt",
     "Persist a prompt in durable prompt history for a project.",

@@ -31,6 +31,13 @@ export async function ensureScalarIndexes(db: Db): Promise<void> {
   await db.collection("prompts").createIndex({ project: 1, created_at: -1 });
   await db.collection("prompts").createIndex({ project: 1, source: 1, created_at: -1 });
   await db.collection("prompts").createIndex({ project: 1, tags: 1 });
+  await db.collection("mcp_context").createIndex({ project: 1, created_at: -1 });
+  await db.collection("mcp_context").createIndex({ project: 1, source: 1, created_at: -1 });
+  await db.collection("mcp_context").createIndex({ project: 1, run_id: 1 });
+  await db.collection("mcp_context").createIndex({ project: 1, tags: 1 });
+  await db.collection("mcp_tool_calls").createIndex({ project: 1, ts: -1 });
+  await db.collection("mcp_tool_calls").createIndex({ tool: 1, ts: -1 });
+  await db.collection("mcp_tool_calls").createIndex({ ok: 1, ts: -1 });
   await db.collection("symbols").createIndex({ project: 1, file: 1 });
   await db.collection("symbols").createIndex({ project: 1, name: 1 });
   await db.collection("conventions").createIndex({ project: 1, scope_glob: 1 });
@@ -44,6 +51,8 @@ export async function ensureTextIndexes(db: Db): Promise<void> {
   await db.collection("memory").createIndex({ body: "text", description: "text" });
   await db.collection("decisions").createIndex({ title: "text", context: "text" });
   await db.collection("prompts").createIndex({ title: "text", prompt: "text" });
+  await db.collection("mcp_context").createIndex({ title: "text", content_text: "text" });
+  await db.collection("mcp_tool_calls").createIndex({ tool: "text", args_preview: "text", result_preview: "text", error_message: "text" });
 }
 
 /** Atlas Vector Search index definition for an `embedding` field. */
