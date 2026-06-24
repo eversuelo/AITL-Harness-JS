@@ -15,6 +15,7 @@ en la colección `decisions` de Mongo vía `aitl adr-sync --dir docs/adr --proje
 | [0006](0006-user-level-config-profile.md) | Perfil de config a nivel usuario (`~/.aitl/config.json`) con export/import para `npm i -g` | Accepted | 2026-06-23 |
 | [0007](0007-memory-admin-web-ui.md) | UI web de administración de memorias sobre una proyección HTTP de `MemoryStore` | Accepted | 2026-06-23 |
 | [0008](0008-interactive-control-panel.md) | Panel de control interactivo (`aitl -i`) como supervisor readline sin dependencias | Accepted | 2026-06-23 |
+| [0009](0009-atlas-migration-via-driver.md) | Migración de base a Atlas vía el driver de Node (`aitl migrate-atlas`) | Accepted | 2026-06-24 |
 
 ## Hilo de la sesión 2026-06-23
 

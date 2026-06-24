@@ -66,6 +66,17 @@ es **aditivo** y **parity-neutral** (TS-only): no cambia `docs/parity-contract.j
    (`src/init/agent.ts`).
 8. **Preferencia del usuario:** *guardar siempre las memorias/decisiones de cada sesión* en
    el backend `aitl-js`.
+9. **Web UI v2** — navegación **Memory / Decisions / Prompts** (tabs Radix), render de
+   Markdown (react-markdown + remark-gfm + `@tailwindcss/typography`) y tema **GitHub dark**.
+   Endpoints API `/api/decisions`, `/api/prompts`. Aclaración: los ADR viven en la colección
+   `decisions`, no en `memory` (por eso no se veían en la pestaña Memory).
+10. **`sharp` desbloqueado** — `allowBuilds: sharp/esbuild = true` + `onlyBuiltDependencies`
+    en `pnpm-workspace.yaml`; binario nativo construido → embedder local funciona; docs de
+    `aitl-js` re-embeddeados.
+11. **`aitl migrate-atlas <uri>`** ([[ADR-0009]]) — copia una base local → Atlas (solo datos;
+    índices vía `init-db`). `src/migrate/atlas.ts`, sin credenciales hardcodeadas. El write
+    externo lo ejecuta el usuario (guardrail de exfiltración del harness lo bloquea para el
+    agente). DB local `aitl`: 9 colecciones, 23 docs (decisions 8, memory 1, prompts 14).
 
 ## Plan / tareas pendientes
 - Fase A/B del plan TUI (`docs/TUI-IMPLEMENTATION-PLAN.md`): streaming en providers +

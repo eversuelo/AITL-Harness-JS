@@ -13,6 +13,12 @@
  *   aitl export --adapter cursor --project P  project canon into a tool's format
  *   aitl eval --models gemini,openai --project P  run the eval delta (stub benchmarks)
  *   aitl mcp                              run the MCP server (stdio) for Claude Code
+ *   aitl interactive | -i                interactive control panel (supervise MCP/UI)
+ *   aitl ui --project P                   memory-admin web UI (HTTP API + Vite)
+ *   aitl config {path,show,export,import,set,unset}  user-level config profile
+ *   aitl prompt {add,list,search} --project P        durable prompt history
+ *   aitl init agent --interactive        write AGENTS.md (consult the MCP on every decision)
+ *   aitl migrate-atlas <uri> --to-db P   copy a DB to another cluster (local → Atlas)
  */
 
 import { Command } from "commander";
@@ -385,6 +391,41 @@ init
       interactive: opts.interactive,
     });
     console.log(`Wrote agent guide to ${path}.`);
+  });
+
+// ── migrate-atlas (copy a DB to another cluster, e.g. local → Atlas; data only) ──
+program
+  .command("migrate-atlas")
+  .argument("<target-uri>", "Destination MongoDB URI (e.g. an Atlas mongodb+srv string).")
+  .option("--from <uri>", "Source URI (default: configured MONGODB_URI).")
+  .option("--from-db <db>", "Source database (default: configured MONGODB_DB).")
+  .option("--to-db <db>", "Target database (default: same as source).")
+  .option("--collections <list>", "Comma-separated subset (default: all).")
+  .option("--drop", "Drop each target collection before copying (overwrite).", false)
+  .option("--dry-run", "Report counts without writing anything.", false)
+  .description("Copy a database to another MongoDB/Atlas cluster (data only; run init-db on the target for indexes).")
+  .action(async (targetUri, opts) => {
+    const { migrateToAtlas } = await import("./migrate/atlas.js");
+    const rows = await migrateToAtlas({
+      targetUri,
+      fromUri: opts.from,
+      fromDb: opts.fromDb,
+      toDb: opts.toDb,
+      collections: opts.collections
+        ? String(opts.collections).split(",").map((s: string) => s.trim()).filter(Boolean)
+        : undefined,
+      drop: opts.drop,
+      dryRun: opts.dryRun,
+    });
+    const total = rows.reduce((n, r) => n + r.copied, 0);
+    for (const r of rows) console.log(`${r.collection.padEnd(16)} ${r.copied}`);
+    console.log(
+      `TOTAL: ${total} docs across ${rows.length} collections` +
+        (opts.dryRun ? " (dry-run — nothing written)." : "."),
+    );
+    const to = opts.toDb ?? opts.fromDb ?? "<db>";
+    console.log(`Next (indexes incl. vector): MONGODB_URI="${targetUri}" MONGODB_DB="${to}" aitl init-db`);
+    await closeClient();
   });
 
 program.parseAsync(process.argv).catch((err) => {

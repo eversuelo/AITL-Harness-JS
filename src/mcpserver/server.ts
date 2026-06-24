@@ -134,8 +134,60 @@ function projectFromArgs(args: Record<string, unknown>): string {
   return typeof args.project === "string" && args.project.trim() ? args.project : process.env.AITL_MCP_PROJECT || "mcp";
 }
 
+let mcpStorageReady: Promise<void> | null = null;
+
+async function ensureCollection(name: string): Promise<void> {
+  const db = getDb();
+  const exists = await db.listCollections({ name }).hasNext();
+  if (!exists) {
+    try {
+      await db.createCollection(name);
+    } catch (err) {
+      if (!String(err).includes("already exists")) throw err;
+    }
+  }
+}
+
+async function ensureMcpStorage(): Promise<void> {
+  if (mcpStorageReady === null) {
+    mcpStorageReady = (async () => {
+      const db = getDb();
+      for (const name of ["prompts", "mcp_context", "mcp_tool_calls"]) {
+        await ensureCollection(name);
+      }
+
+      await db.collection("prompts").createIndex({ project: 1, created_at: -1 });
+      await db.collection("prompts").createIndex({ project: 1, source: 1, created_at: -1 });
+      await db.collection("prompts").createIndex({ project: 1, tags: 1 });
+      await db.collection("prompts").createIndex({ title: "text", prompt: "text" });
+
+      await db.collection("mcp_context").createIndex({ project: 1, created_at: -1 });
+      await db.collection("mcp_context").createIndex({ project: 1, source: 1, created_at: -1 });
+      await db.collection("mcp_context").createIndex({ project: 1, run_id: 1 });
+      await db.collection("mcp_context").createIndex({ project: 1, tags: 1 });
+      await db.collection("mcp_context").createIndex({ context_id: 1 }, { unique: true });
+      await db.collection("mcp_context").createIndex({ title: "text", content_text: "text" });
+
+      await db.collection("mcp_tool_calls").createIndex({ project: 1, ts: -1 });
+      await db.collection("mcp_tool_calls").createIndex({ tool: 1, ts: -1 });
+      await db.collection("mcp_tool_calls").createIndex({ ok: 1, ts: -1 });
+      await db.collection("mcp_tool_calls").createIndex({
+        tool: "text",
+        args_preview: "text",
+        result_preview: "text",
+        error_message: "text",
+      });
+    })().catch((err) => {
+      mcpStorageReady = null;
+      throw err;
+    });
+  }
+  await mcpStorageReady;
+}
+
 async function persistMcpToolCall(doc: Record<string, unknown>): Promise<void> {
   try {
+    await ensureMcpStorage();
     await getDb().collection("mcp_tool_calls").insertOne(doc);
   } catch (err) {
     logEvent("mcp-context:error", { reason: "persist_tool_call_failed", error: errorInfo(err) });
@@ -283,6 +335,7 @@ export function buildServer(): McpServer {
     },
     async ({ project, messages, title, summary, source, model, run_id, tags, context, metadata }) => {
       return runLogged("save_mcp_context", { project, title, summary, source, model, run_id, tags, messages, context, metadata }, async () => {
+        await ensureMcpStorage();
         const contextId = randomUUID();
         const contextBody = context ?? {};
         const doc = {
@@ -329,6 +382,7 @@ export function buildServer(): McpServer {
     },
     async ({ project, limit, source, tag, run_id }) => {
       return runLogged("list_mcp_context", { project, limit, source, tag, run_id }, async () => {
+        await ensureMcpStorage();
         const query: Record<string, unknown> = { project };
         if (source) query.source = source;
         if (tag) query.tags = tag;
@@ -350,6 +404,7 @@ export function buildServer(): McpServer {
     { project: z.string(), query: z.string(), limit: z.number().int().min(1).max(50).default(10) },
     async ({ project, query, limit }) => {
       return runLogged("search_mcp_context", { project, query, limit }, async () => {
+        await ensureMcpStorage();
         const coll = getDb().collection("mcp_context");
         let rows: unknown[];
         try {
@@ -386,6 +441,7 @@ export function buildServer(): McpServer {
     },
     async ({ project, prompt, title, source, model, run_id, tags, metadata }) => {
       return runLogged("record_prompt", { project, prompt, title, source, model, run_id, tags, metadata }, async () => {
+        await ensureMcpStorage();
         const doc = {
           project,
           prompt,
@@ -414,6 +470,7 @@ export function buildServer(): McpServer {
     },
     async ({ project, limit, source, tag }) => {
       return runLogged("list_prompts", { project, limit, source, tag }, async () => {
+        await ensureMcpStorage();
         const query: Record<string, unknown> = { project };
         if (source) query.source = source;
         if (tag) query.tags = tag;
@@ -434,6 +491,7 @@ export function buildServer(): McpServer {
     { project: z.string(), query: z.string(), limit: z.number().int().min(1).max(50).default(10) },
     async ({ project, query, limit }) => {
       return runLogged("search_prompts", { project, query, limit }, async () => {
+        await ensureMcpStorage();
         const coll = getDb().collection("prompts");
         let rows: unknown[];
         try {
