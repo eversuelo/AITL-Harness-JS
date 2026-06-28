@@ -10,6 +10,7 @@ Indice de lectura para explorar AITL-Harness-JS en GitHub.
 4. [PARITY.md](PARITY.md): estado de paridad con el port Python.
 5. [MONGODB-ATLAS.md](MONGODB-ATLAS.md): setup de Mongo local/cloud.
 6. [GOOGLE-FREE.md](GOOGLE-FREE.md): provider `google-free` / `gemini-free`.
+7. [RBAC-REGISTRO.md](RBAC-REGISTRO.md): contrato de roles, registro root y permisos.
 
 ## ADRs
 
@@ -46,6 +47,7 @@ Indice de lectura para explorar AITL-Harness-JS en GitHub.
 |---|---|
 | [MONGODB-ATLAS.md](MONGODB-ATLAS.md) | MongoDB local y Atlas cloud. |
 | [GOOGLE-FREE.md](GOOGLE-FREE.md) | Perfil Google free tier. |
+| [RBAC-REGISTRO.md](RBAC-REGISTRO.md) | RBAC, registro root y permisos de usuarios/agentes. |
 
 ## Regla de navegacion
 

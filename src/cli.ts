@@ -66,9 +66,9 @@ program
 
 program
   .command("check-db")
-  .description("Validate MongoDB connectivity/auth (tries primary then fallback) without creating collections or indexes.")
+  .description("Validate MongoDB connectivity/auth (tries primary then fallback) and RBAC readiness (users collection, unique indexes, root user).")
   .action(async () => {
-    const { connectWithFallback } = await import("./db/client.js");
+    const { connectWithFallback, getDb } = await import("./db/client.js");
     const result = await connectWithFallback({
       onAttempt: (a) =>
         console.log(a.ok ? `  ✓ ${a.label}: ${a.uri}` : `  ✗ ${a.label}: ${a.uri} — ${a.error}`),
@@ -77,7 +77,11 @@ program
     if (result.serverVersion !== undefined) {
       console.log(`Server version: ${result.serverVersion}`);
     }
+    const { checkRbac } = await import("./auth/checkdb.js");
+    const rbac = await checkRbac(getDb());
+    for (const line of rbac.lines) console.log(line);
     await closeClient();
+    if (!rbac.ready) process.exitCode = 1;
   });
 
 program
@@ -271,14 +275,151 @@ program
   .option("--host <host>", "HTTP bind host (use 0.0.0.0 behind a proxy/tunnel).", "127.0.0.1")
   .option("--port <n>", "HTTP port.", "8000")
   .option("--path <path>", "HTTP path.", "/mcp")
+  .option("--socket <path>", "HTTP Unix socket path (local only; overrides --host/--port).")
   .option("--token <token>", "Require this Bearer token (or set AITL_MCP_TOKEN). Omit only on trusted localhost.")
   .action(async (opts) => {
     const { main, mainHttp } = await import("./mcpserver/server.js");
     if (opts.http) {
-      await mainHttp({ host: opts.host, port: Number(opts.port), path: opts.path, token: opts.token });
+      await mainHttp({ host: opts.host, port: Number(opts.port), path: opts.path, socketPath: opts.socket, token: opts.token });
     } else {
       await main();
     }
+  });
+
+const user = program
+  .command("user")
+  .description("Manage bootstrap users stored in MongoDB.");
+
+user
+  .command("bootstrap")
+  .description("Create the env-configured bootstrap user if it does not exist.")
+  .action(async () => {
+    const { connectWithFallback, closeClient } = await import("./db/client.js");
+    const { bootstrapBaseUser } = await import("./auth/users.js");
+    await connectWithFallback();
+    const result = await bootstrapBaseUser();
+    console.log(`Bootstrap user: ${result.status}${result.username ? ` (${result.username}, ${result.email}, role=${result.role})` : ""}`);
+    if (result.reason) console.log(result.reason);
+    await closeClient();
+  });
+
+user
+  .command("verify")
+  .requiredOption("--username <username>", "Username to verify.")
+  .requiredOption("--email <email>", "Email to verify.")
+  .requiredOption("--password <password>", "Password to verify.")
+  .description("Verify username + email + password against the stored bootstrap user.")
+  .action(async (opts) => {
+    const { connectWithFallback, closeClient } = await import("./db/client.js");
+    const { verifyUserCredentials } = await import("./auth/users.js");
+    await connectWithFallback();
+    const result = await verifyUserCredentials({
+      username: opts.username,
+      email: opts.email,
+      password: opts.password,
+    });
+    console.log(result.ok ? `User verified: ${result.username} (${result.email}, role=${result.role})` : `User verification failed: ${result.reason}`);
+    await closeClient();
+    if (!result.ok) process.exitCode = 1;
+  });
+
+// CLI runs on the host that owns AITL, so the operator acts as root.
+const CLI_ACTOR = { id: "cli:local", role: "root" as const, source: "cli" as const };
+
+user
+  .command("list")
+  .description("List users (no password hashes). Root-only.")
+  .action(async () => {
+    const { connectWithFallback, getDb } = await import("./db/client.js");
+    const { listUsers } = await import("./auth/users.js");
+    await connectWithFallback();
+    const rows = await listUsers(getDb());
+    for (const u of rows) {
+      console.log(`${u.username}\t${u.role}\t${u.email}${u.disabled ? "\t(disabled)" : ""}`);
+    }
+    if (!rows.length) console.log("(no users)");
+    await closeClient();
+  });
+
+user
+  .command("create")
+  .requiredOption("--username <username>", "New username.")
+  .requiredOption("--email <email>", "New email.")
+  .requiredOption("--password <password>", "Password (min 12 chars).")
+  .option("--role <role>", "root | admin | user | agent | auditor", "user")
+  .description("Create a user. Root-only; audited.")
+  .action(async (opts) => {
+    const { connectWithFallback, getDb } = await import("./db/client.js");
+    const { createUser } = await import("./auth/users.js");
+    const { assertCan } = await import("./auth/rbac.js");
+    const { recordAudit } = await import("./auth/audit.js");
+    await connectWithFallback();
+    const db = getDb();
+    try {
+      assertCan(CLI_ACTOR, "users", "create");
+      const created = await createUser({ username: opts.username, email: opts.email, password: opts.password, role: opts.role }, db);
+      await recordAudit({ actor_id: CLI_ACTOR.id, actor_role: CLI_ACTOR.role, source: "cli", action: "users.create", resource: `user:${created.username}`, ok: true }, db);
+      console.log(`Created user: ${created.username} (${created.email}, role=${created.role})`);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await recordAudit({ actor_id: CLI_ACTOR.id, actor_role: CLI_ACTOR.role, source: "cli", action: "users.create", resource: `user:${opts.username}`, ok: false, reason }, db);
+      console.error(`Create failed: ${reason}`);
+      process.exitCode = 1;
+    }
+    await closeClient();
+  });
+
+user
+  .command("set-role")
+  .requiredOption("--username <username>", "Target username.")
+  .requiredOption("--role <role>", "root | admin | user | agent | auditor")
+  .description("Change a user's role. Root-only; audited.")
+  .action(async (opts) => {
+    const { connectWithFallback, getDb } = await import("./db/client.js");
+    const { setUserRole } = await import("./auth/users.js");
+    const { assertCan } = await import("./auth/rbac.js");
+    const { recordAudit } = await import("./auth/audit.js");
+    await connectWithFallback();
+    const db = getDb();
+    try {
+      assertCan(CLI_ACTOR, "users", "set_role");
+      const u = await setUserRole(opts.username, opts.role, db);
+      await recordAudit({ actor_id: CLI_ACTOR.id, actor_role: CLI_ACTOR.role, source: "cli", action: "users.set_role", resource: `user:${u.username}`, ok: true, reason: `role=${u.role}` }, db);
+      console.log(`Updated ${u.username}: role=${u.role}`);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await recordAudit({ actor_id: CLI_ACTOR.id, actor_role: CLI_ACTOR.role, source: "cli", action: "users.set_role", resource: `user:${opts.username}`, ok: false, reason }, db);
+      console.error(`Set-role failed: ${reason}`);
+      process.exitCode = 1;
+    }
+    await closeClient();
+  });
+
+user
+  .command("disable")
+  .requiredOption("--username <username>", "Target username.")
+  .option("--enable", "Re-enable instead of disabling.")
+  .description("Disable (or re-enable) a user. Root-only; audited.")
+  .action(async (opts) => {
+    const { connectWithFallback, getDb } = await import("./db/client.js");
+    const { setUserDisabled } = await import("./auth/users.js");
+    const { assertCan } = await import("./auth/rbac.js");
+    const { recordAudit } = await import("./auth/audit.js");
+    await connectWithFallback();
+    const db = getDb();
+    const disabled = !opts.enable;
+    try {
+      assertCan(CLI_ACTOR, "users", "disable");
+      const u = await setUserDisabled(opts.username, disabled, db);
+      await recordAudit({ actor_id: CLI_ACTOR.id, actor_role: CLI_ACTOR.role, source: "cli", action: "users.disable", resource: `user:${u.username}`, ok: true, reason: `disabled=${disabled}` }, db);
+      console.log(`Updated ${u.username}: disabled=${disabled}`);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await recordAudit({ actor_id: CLI_ACTOR.id, actor_role: CLI_ACTOR.role, source: "cli", action: "users.disable", resource: `user:${opts.username}`, ok: false, reason }, db);
+      console.error(`Disable failed: ${reason}`);
+      process.exitCode = 1;
+    }
+    await closeClient();
   });
 
 // ── config (portable profile for `npm i -g`; stored at ~/.aitl/config.json) ──────

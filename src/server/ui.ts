@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { closeClient } from "../db/client.js";
+import { bootstrapBaseUser } from "../auth/users.js";
 import { createApiServer } from "./api.js";
 
 export interface StartUiOpts {
@@ -67,6 +68,14 @@ function startViteDevServer(opts: StartUiOpts): ChildProcess | undefined {
 
 /** Start the API + (optionally) the Vite dev server, wiring graceful shutdown. */
 export async function startUi(opts: StartUiOpts): Promise<void> {
+  try {
+    const user = await bootstrapBaseUser();
+    if (user.status !== "skipped") {
+      console.log(`[ui] bootstrap user: ${user.status}${user.username ? ` (${user.username})` : ""}`);
+    }
+  } catch (err) {
+    console.warn(`[ui] bootstrap user skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
   const api = createApiServer();
   await new Promise<void>((resolve) => api.listen(opts.apiPort, resolve));
   console.log(`[ui] memory-admin API → http://localhost:${opts.apiPort}/api`);

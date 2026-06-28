@@ -8,14 +8,17 @@
  */
 
 import { settings } from "../src/config.js";
+import { bootstrapBaseUser } from "../src/auth/users.js";
 import { closeClient } from "../src/db/client.js";
 import { initIndexes } from "../src/db/indexes.js";
 
 async function main(): Promise<void> {
   console.log(`Connecting to ${settings.mongodbUri} (db=${settings.mongodbDb}) ...`);
   const db = await initIndexes();
+  const user = await bootstrapBaseUser(db);
   const names = (await db.listCollections().toArray()).map((c) => c.name).sort();
   console.log(`OK. Collections: ${names.join(", ")}`);
+  console.log(`Bootstrap user: ${user.status}${user.username ? ` (${user.username}, ${user.email})` : ""}`);
   console.log(
     `Vector index dims = ${settings.embeddingDims} ` +
       `(embedder=${settings.embeddingProvider}:${settings.embeddingModel})`,

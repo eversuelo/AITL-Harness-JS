@@ -6,7 +6,7 @@
  * MemoryStore/COLLECTIONS to preserve parity.
  */
 
-import type { Db, Document } from "mongodb";
+import { type Db, type Document, ObjectId } from "mongodb";
 import { getDb } from "../db/client.js";
 import { PROMPT_COLLECTION, type PromptRecord, makePromptRecord } from "./schemas.js";
 
@@ -40,6 +40,19 @@ export class PromptStore {
       .sort({ created_at: -1 })
       .limit(opts.limit ?? 50)
       .toArray();
+  }
+
+  /** Fetch a single prompt by its stored ObjectId string, or null if not found/invalid. */
+  async getById(id: string): Promise<(Document & { owner_user?: string | null }) | null> {
+    if (!ObjectId.isValid(id)) return null;
+    return this.db.collection(PROMPT_COLLECTION).findOne({ _id: new ObjectId(id) });
+  }
+
+  /** Delete a prompt by id. Returns whether a document was removed. */
+  async deleteById(id: string): Promise<boolean> {
+    if (!ObjectId.isValid(id)) return false;
+    const res = await this.db.collection(PROMPT_COLLECTION).deleteOne({ _id: new ObjectId(id) });
+    return res.deletedCount === 1;
   }
 
   /** Search the prompt history: Mongo `$text` with a case-insensitive regex fallback. */

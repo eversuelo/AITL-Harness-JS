@@ -18,6 +18,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { settings } from "../config.js";
+import { recordAudit } from "../auth/audit.js";
+import { type Action, type Actor, type Resource, type Role, can, isRole } from "../auth/rbac.js";
+import { bootstrapBaseUser } from "../auth/users.js";
 import { connectWithFallback, getDb } from "../db/client.js";
 import { embedOne } from "../ingest/embedder.js";
 import { extractLinks, parseMarkdownDir } from "../ingest/markdown.js";
@@ -220,10 +223,55 @@ async function persistMcpToolCall(doc: Record<string, unknown>): Promise<void> {
   }
 }
 
+/**
+ * Tools that mutate durable state, mapped to the RBAC resource/action they need.
+ * Read-only tools are absent → never RBAC-restricted.
+ */
+const TOOL_RBAC: Record<string, { resource: Resource; action: Action }> = {
+  write_memory: { resource: "memory", action: "create" },
+  ingest_path: { resource: "memory", action: "create" },
+  graphify: { resource: "memory", action: "update" },
+  record_decision: { resource: "decisions", action: "create" },
+  record_prompt: { resource: "prompts", action: "create" },
+};
+
+/**
+ * Service identity for the MCP surface. Per RBAC-REGISTRO, the MCP server acts as
+ * an authorized `agent` by default; override with AITL_MCP_ACTOR_ROLE / _ID (e.g.
+ * an `auditor` token that may only read).
+ */
+function mcpActor(): Actor {
+  const role = process.env.AITL_MCP_ACTOR_ROLE;
+  return {
+    id: process.env.AITL_MCP_ACTOR_ID ?? "agent:aitl-server",
+    role: isRole(role) ? (role as Role) : "agent",
+    source: "mcp",
+  };
+}
+
+/** RBAC guard for a sensitive tool. Audits the decision; throws on denial. */
+async function guardTool(tool: string, args: Record<string, unknown>): Promise<void> {
+  const need = TOOL_RBAC[tool];
+  if (!need) return;
+  const actor = mcpActor();
+  const decision = can(actor, need.resource, need.action, { delegated: true });
+  await recordAudit({
+    actor_id: actor.id,
+    actor_role: actor.role,
+    source: "mcp",
+    action: `${need.resource}.${need.action}`,
+    resource: `${need.resource}:${tool}`,
+    ok: decision.allow,
+    reason: decision.reason,
+  });
+  if (!decision.allow) throw new Error(`RBAC denied: ${decision.reason} (tool=${tool})`);
+}
+
 async function runLogged<T>(tool: string, args: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
   logEvent("tool:start", { tool, args: preview(args) });
   try {
+    await guardTool(tool, args);
     const result = await fn();
     const ms = Date.now() - started;
     logEvent("tool:end", { tool, ms, result: preview(result) });
@@ -759,6 +807,7 @@ export interface HttpOptions {
   host?: string;
   port?: number;
   path?: string;
+  socketPath?: string;
   /** Required Bearer token; falsy means the endpoint is unauthenticated. */
   token?: string;
 }
@@ -778,12 +827,14 @@ export async function mainHttp(opts: HttpOptions = {}): Promise<void> {
   const host = opts.host ?? process.env.AITL_MCP_HOST ?? "127.0.0.1";
   const port = opts.port ?? Number.parseInt(process.env.AITL_MCP_PORT ?? "8000", 10);
   const path = opts.path ?? process.env.AITL_MCP_PATH ?? "/mcp";
+  const socketPath = (opts.socketPath ?? process.env.AITL_MCP_SOCKET_PATH ?? "").trim() || undefined;
   const token = (opts.token ?? process.env.AITL_MCP_TOKEN ?? "").trim() || undefined;
   // DNS-rebinding protection is on unless explicitly disabled (needed for tunnels
   // whose public Host header is not in the allow-list — then set AITL_MCP_DNS_REBINDING=0).
   const dnsProtection = (process.env.AITL_MCP_DNS_REBINDING ?? "1") !== "0";
   const allowedHosts = (
-    process.env.AITL_MCP_ALLOWED_HOSTS ?? `${host}:${port},localhost:${port},127.0.0.1:${port}`
+    process.env.AITL_MCP_ALLOWED_HOSTS ??
+    (socketPath ? "localhost,127.0.0.1" : `${host}:${port},localhost:${port},127.0.0.1:${port}`)
   )
     .split(",")
     .map((s) => s.trim())
@@ -823,10 +874,17 @@ export async function mainHttp(opts: HttpOptions = {}): Promise<void> {
   });
 
   await connectDb();
-  await new Promise<void>((listening) => httpServer.listen(port, host, listening));
+  await new Promise<void>((listening) => {
+    if (socketPath) {
+      httpServer.listen(socketPath, listening);
+    } else {
+      httpServer.listen(port, host, listening);
+    }
+  });
   logEvent("server:start", {
     transport: "streamable-http",
-    url: `http://${host}:${port}${path}`,
+    url: socketPath ? `http+unix://${encodeURIComponent(socketPath)}:${path}` : `http://${host}:${port}${path}`,
+    socketPath: socketPath ?? null,
     auth: token ? "bearer" : "none",
     dnsRebindingProtection: dnsProtection,
     allowedHosts,
@@ -846,6 +904,12 @@ async function connectDb(): Promise<void> {
       onAttempt: (a) => logEvent("db:attempt", { label: a.label, uri: a.uri, ok: a.ok, error: a.error }),
     });
     logEvent("db:connected", { uri: result.uri, db: result.dbName, via: result.label, serverVersion: result.serverVersion ?? null });
+    try {
+      const user = await bootstrapBaseUser();
+      logEvent("user:bootstrap", { status: user.status, username: user.username ?? null, email: user.email ?? null, role: user.role ?? null });
+    } catch (err) {
+      logEvent("user:bootstrap:error", { error: errorInfo(err) });
+    }
   } catch (err) {
     logEvent("db:error", { error: errorInfo(err) });
   }

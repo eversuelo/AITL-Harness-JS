@@ -54,6 +54,12 @@ const SettingsSchema = z.object({
 
   // ── Adapters (cross-tool, incremental, opt-in) ───────────────────────
   enabledAdapters: z.string().default("agents_md"),
+
+  // ── Bootstrap user (optional, idempotent) ─────────────────────────────
+  bootstrapUsername: z.string().default(""),
+  bootstrapEmail: z.string().default(""),
+  bootstrapPassword: z.string().default(""),
+  bootstrapRole: z.string().default("root"),
 });
 
 export type Settings = z.infer<typeof SettingsSchema> & { adapters: string[] };
@@ -84,6 +90,10 @@ function loadSettings(): Settings {
     memoryMaxDocs: env("MEMORY_MAX_DOCS"),
     memoryMaxTokens: env("MEMORY_MAX_TOKENS"),
     enabledAdapters: env("ENABLED_ADAPTERS"),
+    bootstrapUsername: env("AITL_BOOTSTRAP_USERNAME"),
+    bootstrapEmail: env("AITL_BOOTSTRAP_EMAIL"),
+    bootstrapPassword: env("AITL_BOOTSTRAP_PASSWORD"),
+    bootstrapRole: env("AITL_BOOTSTRAP_ROLE"),
   });
   return {
     ...parsed,

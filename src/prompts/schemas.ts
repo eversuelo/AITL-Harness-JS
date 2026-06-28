@@ -16,6 +16,8 @@ export const PromptRecordSchema = z.object({
   prompt: z.string(),
   title: z.string().default(""),
   source: z.string().default("cli"), // cli | mcp | ui | …
+  actor_id: z.string().nullable().default(null), // who issued it (RBAC actor)
+  owner_user: z.string().nullable().default(null), // username that owns this prompt
   model: z.string().nullable().default(null),
   run_id: z.string().nullable().default(null),
   tags: z.array(z.string()).default([]),

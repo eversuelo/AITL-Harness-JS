@@ -32,6 +32,10 @@ export const ENV_KEYS = [
   "MEMORY_MAX_DOCS",
   "MEMORY_MAX_TOKENS",
   "ENABLED_ADAPTERS",
+  "AITL_BOOTSTRAP_USERNAME",
+  "AITL_BOOTSTRAP_EMAIL",
+  "AITL_BOOTSTRAP_PASSWORD",
+  "AITL_BOOTSTRAP_ROLE",
 ] as const;
 
 export type EnvKey = (typeof ENV_KEYS)[number];
@@ -41,6 +45,7 @@ export type ConfigProfile = Partial<Record<EnvKey, string>>;
 export const SECRET_KEYS: ReadonlySet<EnvKey> = new Set<EnvKey>([
   "OPENROUTER_API_KEY",
   "VOYAGE_API_KEY",
+  "AITL_BOOTSTRAP_PASSWORD",
 ]);
 
 const ENV_KEY_SET: ReadonlySet<string> = new Set(ENV_KEYS);

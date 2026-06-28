@@ -38,6 +38,14 @@ export async function ensureScalarIndexes(db: Db): Promise<void> {
   await db.collection("mcp_tool_calls").createIndex({ project: 1, ts: -1 });
   await db.collection("mcp_tool_calls").createIndex({ tool: 1, ts: -1 });
   await db.collection("mcp_tool_calls").createIndex({ ok: 1, ts: -1 });
+  await db.collection("users").createIndex({ username: 1 }, { unique: true });
+  await db.collection("users").createIndex({ email: 1 }, { unique: true });
+  await db.collection("users").createIndex({ created_at: -1 });
+  await db.collection("users").createIndex({ role: 1 });
+  await db.collection("audit").createIndex({ ts: -1 });
+  await db.collection("audit").createIndex({ actor_id: 1, ts: -1 });
+  await db.collection("audit").createIndex({ resource: 1, action: 1, ts: -1 });
+  await db.collection("audit").createIndex({ ok: 1, ts: -1 });
   await db.collection("symbols").createIndex({ project: 1, file: 1 });
   await db.collection("symbols").createIndex({ project: 1, name: 1 });
   await db.collection("conventions").createIndex({ project: 1, scope_glob: 1 });
