@@ -514,12 +514,14 @@ const NODE_FILL: Record<GraphNode["kind"], string> = {
   software: "#ef4444",
   project: "#8b5cf6",
   repo: "#22c55e",
+  branch: "#0ea5e9",
 };
 const EDGE_STROKE: Record<string, string> = {
   ref: "#a5b4fc",
   link: "#fcd34d",
   contains: "#94a3b8",
   references: "#f472b6",
+  derives: "#0ea5e9",
 };
 
 /** Deterministic Fruchterman–Reingold-style force layout (pure, no deps). */
@@ -725,6 +727,7 @@ const KIND_LABEL: Record<NodeKind, string> = {
   software: "software",
   project: "project",
   repo: "repo",
+  branch: "branch",
   memory: "memory",
   decision: "decision",
   context: "context",

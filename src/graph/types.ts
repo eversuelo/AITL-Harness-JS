@@ -8,11 +8,11 @@
 
 export type Scope = "all" | "symbols" | "memory";
 
-/** Entity kinds a node can represent (ADR-0029 knowledge map adds the hierarchy kinds). */
-export type NodeKind = "symbol" | "memory" | "decision" | "context" | "software" | "project" | "repo";
+/** Entity kinds a node can represent (ADR-0029 knowledge map; ADR-0031 adds `branch`). */
+export type NodeKind = "symbol" | "memory" | "decision" | "context" | "software" | "project" | "repo" | "branch";
 
-/** Edge kinds (ADR-0029 adds `contains` for hierarchy and `references` for cross-links). */
-export type EdgeKind = "ref" | "link" | "contains" | "references";
+/** Edge kinds (ADR-0029 `contains`/`references`; ADR-0031 `derives` for branch graph). */
+export type EdgeKind = "ref" | "link" | "contains" | "references" | "derives";
 
 export interface GraphNode {
   id: string;
@@ -80,6 +80,14 @@ export interface RepoRow {
   name?: string;
   project?: string;
   software?: string | null;
+  [k: string]: unknown;
+}
+export interface BranchRow {
+  name?: string;
+  repo?: string;
+  kind?: string;
+  environment?: string;
+  base?: string | null;
   [k: string]: unknown;
 }
 

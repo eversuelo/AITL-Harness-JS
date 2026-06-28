@@ -43,8 +43,8 @@ export interface PromptDoc {
   created_at?: string;
 }
 
-export type NodeKind = "symbol" | "memory" | "decision" | "context" | "software" | "project" | "repo";
-export type EdgeKind = "ref" | "link" | "contains" | "references";
+export type NodeKind = "symbol" | "memory" | "decision" | "context" | "software" | "project" | "repo" | "branch";
+export type EdgeKind = "ref" | "link" | "contains" | "references" | "derives";
 
 export interface GraphNode {
   id: string;
@@ -70,7 +70,7 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
-export const KNOWLEDGE_KINDS: NodeKind[] = ["software", "project", "repo", "memory", "decision", "context", "symbol"];
+export const KNOWLEDGE_KINDS: NodeKind[] = ["software", "project", "repo", "branch", "memory", "decision", "context", "symbol"];
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {

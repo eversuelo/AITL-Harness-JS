@@ -796,6 +796,58 @@ repo
     await closeClient();
   });
 
+// ── branch catalog (ADR-0031: grafo de ramas estilo GitHub) ──────────────────
+const branch = program.command("branch").description("Classify git branches and feed the branch graph.");
+
+branch
+  .command("sync")
+  .requiredOption("--project <project>", "Project scope.")
+  .requiredOption("--repo <repo>", "Repo name this branch set belongs to.")
+  .option("--root <dir>", "Git repo root.", ".")
+  .option("--remote <url>", "Remote URL to record.")
+  .description("Read the repo's git branches, classify them and upsert into the catalog.")
+  .action(async (opts) => {
+    const { syncBranches } = await import("./branches/sync.js");
+    const recs = await syncBranches({ project: opts.project, repo: opts.repo, root: opts.root, remote: opts.remote });
+    console.log(`Synced ${recs.length} branch(es) for ${opts.project}/${opts.repo}:`);
+    for (const r of recs) {
+      const env = r.environment !== "none" ? ` [${r.environment}]` : "";
+      const from = r.base ? ` ← ${r.base}` : "";
+      console.log(`  ${r.name}  (${r.kind})${env}${from}`);
+    }
+    if (!recs.length) console.log("  (no local branches found — is --root a git repo?)");
+    await closeClient();
+  });
+
+branch
+  .command("list")
+  .option("--project <project>", "Filter by project.")
+  .option("--repo <repo>", "Filter by repo.")
+  .option("--kind <kind>", "Filter by kind (main|master|develop|staging|release|hotfix|feature|other).")
+  .description("List classified branches (newest first).")
+  .action(async (opts) => {
+    const { BranchStore } = await import("./branches/store.js");
+    const rows = await new BranchStore().list({ project: opts.project, repo: opts.repo, kind: opts.kind });
+    for (const r of rows) {
+      const env = r.environment !== "none" ? ` [${r.environment}]` : "";
+      const from = r.base ? ` ← ${r.base}` : "";
+      console.log(`- ${r.project}/${r.repo}:${r.name}  (${r.kind})${env}${from}`);
+    }
+    if (!rows.length) console.log("(no branches)");
+    await closeClient();
+  });
+
+branch
+  .command("rm")
+  .argument("<name>", "Branch name.")
+  .requiredOption("--project <project>", "Project scope.")
+  .requiredOption("--repo <repo>", "Repo name.")
+  .action(async (name, opts) => {
+    const { BranchStore } = await import("./branches/store.js");
+    console.log((await new BranchStore().delete(opts.project, opts.repo, name)) ? `Deleted '${name}'.` : `(no branch '${name}')`);
+    await closeClient();
+  });
+
 // ── definition builder (ADR-0030: skill constructora) ────────────────────────
 const build = program.command("build").description("Construct skills/agents (and seed the master skills).");
 

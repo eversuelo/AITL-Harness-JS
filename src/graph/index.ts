@@ -48,13 +48,16 @@ export async function knowledgeGraphify(
   const include = opts.entities ?? KNOWLEDGE_ENTITIES.filter((k) => k !== "symbol");
   const want = new Set(include);
   const p = opts.project;
-  const [symbols, memory, decisions, context, softwares, repos] = await Promise.all([
+  // Branches always need their repos present to attach under; fetch repos if either is wanted.
+  const needRepos = want.has("repo") || want.has("branch");
+  const [symbols, memory, decisions, context, softwares, repos, branches] = await Promise.all([
     want.has("symbol") ? source.symbols(p) : Promise.resolve([]),
     want.has("memory") ? source.memory(p) : Promise.resolve([]),
     want.has("decision") ? source.decisions(p) : Promise.resolve([]),
     want.has("context") ? source.context(p) : Promise.resolve([]),
     want.has("software") ? source.softwares(p) : Promise.resolve([]),
-    want.has("repo") ? source.repos(p) : Promise.resolve([]),
+    needRepos ? source.repos(p) : Promise.resolve([]),
+    want.has("branch") ? source.branches(p) : Promise.resolve([]),
   ]);
-  return buildKnowledgeGraph({ symbols, memory, decisions, context, softwares, repos }, p, include);
+  return buildKnowledgeGraph({ symbols, memory, decisions, context, softwares, repos, branches }, p, include);
 }

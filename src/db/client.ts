@@ -33,6 +33,7 @@ export const COLLECTIONS = [
   "events",
   "softwares",
   "repos",
+  "branches",
 ] as const;
 
 let _client: MongoClient | null = null;

@@ -63,6 +63,9 @@ export async function ensureScalarIndexes(db: Db): Promise<void> {
   await db.collection("repos").createIndex({ project: 1, name: 1 }, { unique: true });
   await db.collection("repos").createIndex({ software: 1 });
   await db.collection("repos").createIndex({ updated_at: -1 });
+  // Branch catalog (ADR-0031).
+  await db.collection("branches").createIndex({ project: 1, repo: 1, name: 1 }, { unique: true });
+  await db.collection("branches").createIndex({ project: 1, repo: 1, kind: 1 });
 }
 
 export async function ensureTextIndexes(db: Db): Promise<void> {

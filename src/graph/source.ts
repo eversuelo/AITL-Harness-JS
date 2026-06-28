@@ -8,7 +8,7 @@
  */
 
 import type { Db } from "mongodb";
-import type { ContextRow, DecisionRow, MemoryRow, RepoRow, SoftwareRow, SymbolRow } from "./types.js";
+import type { BranchRow, ContextRow, DecisionRow, MemoryRow, RepoRow, SoftwareRow, SymbolRow } from "./types.js";
 
 export interface GraphSource {
   /** Distinct projects that have durable state worth graphing. */
@@ -25,6 +25,8 @@ export interface GraphSource {
   softwares(project: string): Promise<SoftwareRow[]>;
   /** `repos` belonging to a project. */
   repos(project: string): Promise<RepoRow[]>;
+  /** `branches` belonging to a project (ADR-0031). */
+  branches(project: string): Promise<BranchRow[]>;
 }
 
 /** MongoDB-backed source. Reads symbols/memory and discovers projects. */
@@ -66,5 +68,9 @@ export class MongoGraphSource implements GraphSource {
 
   async repos(project: string): Promise<RepoRow[]> {
     return this.db.collection("repos").find({ project }).toArray() as Promise<RepoRow[]>;
+  }
+
+  async branches(project: string): Promise<BranchRow[]> {
+    return this.db.collection("branches").find({ project }).toArray() as Promise<BranchRow[]>;
   }
 }

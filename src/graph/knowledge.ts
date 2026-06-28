@@ -8,6 +8,7 @@
 
 import { buildMemoryGraph, buildSymbolGraph } from "./build.js";
 import type {
+  BranchRow,
   ContextRow,
   DecisionRow,
   Graph,
@@ -20,7 +21,7 @@ import type {
   SymbolRow,
 } from "./types.js";
 
-export const KNOWLEDGE_ENTITIES: NodeKind[] = ["software", "project", "repo", "memory", "decision", "context", "symbol"];
+export const KNOWLEDGE_ENTITIES: NodeKind[] = ["software", "project", "repo", "branch", "memory", "decision", "context", "symbol"];
 
 export interface KnowledgeData {
   symbols: SymbolRow[];
@@ -29,6 +30,7 @@ export interface KnowledgeData {
   context: ContextRow[];
   softwares: SoftwareRow[];
   repos: RepoRow[];
+  branches: BranchRow[];
 }
 
 const WIKILINK = /\[\[([^\]]+)\]\]/g;
@@ -97,6 +99,23 @@ export function buildKnowledgeGraph(
     const parent = repo && repoNode.has(repo) ? repoNode.get(repo)! : projId;
     edge(parent, childId, "contains");
   };
+
+  // Branches (ADR-0031): nodes under their repo, with `derives` edges to their base.
+  if (want.has("branch")) {
+    const branchId = (repo: string, name: string) => `branch:${project}/${repo}/${name}`;
+    for (const b of data.branches) {
+      if (!b.repo || !b.name) continue;
+      const id = branchId(b.repo, b.name);
+      add({ id, label: b.name, kind: "branch", project, repo: b.repo, branchKind: b.kind ?? "other", environment: b.environment ?? "none", base: b.base ?? null });
+      const parent = repoNode.get(b.repo);
+      if (parent) edge(parent, id, "contains");
+    }
+    // Derivation edges: branch → its base branch (within the same repo).
+    for (const b of data.branches) {
+      if (!b.repo || !b.name || !b.base) continue;
+      edge(branchId(b.repo, b.name), branchId(b.repo, b.base), "derives");
+    }
+  }
 
   // Memory (reuse existing builder for nodes + link edges).
   if (want.has("memory")) {

@@ -28,6 +28,7 @@ export const RESOURCES = [
   "agents_skills",
   "softwares",
   "repos",
+  "branches",
   "config_secrets",
   "indexes",
 ] as const;
@@ -88,6 +89,11 @@ const MATRIX: Record<string, Partial<Record<Action, Partial<Record<Role, Perm>>>
     delete: { root: "allow", admin: "delegated", agent: "allow" },
   },
   repos: {
+    create: { root: "allow", admin: "delegated", agent: "allow" },
+    update: { root: "allow", admin: "delegated", agent: "allow" },
+    delete: { root: "allow", admin: "delegated", agent: "allow" },
+  },
+  branches: {
     create: { root: "allow", admin: "delegated", agent: "allow" },
     update: { root: "allow", admin: "delegated", agent: "allow" },
     delete: { root: "allow", admin: "delegated", agent: "allow" },

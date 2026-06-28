@@ -298,6 +298,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const software = searchParams.get("software") ?? undefined;
     return send(res, 200, await new RepoStore().list({ project, software, limit: 200 }));
   }
+  if (pathname === "/api/branches" && method === "GET") {
+    const { BranchStore } = await import("../branches/store.js");
+    const project = searchParams.get("project") ?? undefined;
+    const repo = searchParams.get("repo") ?? undefined;
+    const kind = searchParams.get("kind") ?? undefined;
+    return send(res, 200, await new BranchStore().list({ project, repo, kind, limit: 500 }));
+  }
 
   // ── prompt history ────────────────────────────────────────────────────────
   if (pathname === "/api/prompts" && method === "GET") {

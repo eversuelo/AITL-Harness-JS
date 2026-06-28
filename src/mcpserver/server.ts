@@ -241,6 +241,8 @@ const TOOL_RBAC: Record<string, { resource: Resource; action: Action }> = {
   delete_repo: { resource: "repos", action: "delete" },
   index_repo: { resource: "memory", action: "create" },
   build_definition: { resource: "agents_skills", action: "create" },
+  sync_branches: { resource: "branches", action: "create" },
+  delete_branch: { resource: "branches", action: "delete" },
 };
 
 /**
@@ -932,6 +934,42 @@ export function buildServer(): McpServer {
       return runLogged("delete_repo", { project, name }, async () => {
         const { RepoStore } = await import("../repos/store.js");
         return text({ project, name, deleted: await new RepoStore().delete(project, name) });
+      });
+    },
+  );
+
+  // ── branch catalog + classification (ADR-0031) ───────────────────────────────
+  server.tool(
+    "sync_branches",
+    "Read a git repo's local branches, classify each (kind/environment/base) and upsert them into the branch catalog for a GitHub-style graph.",
+    { project: z.string(), repo: z.string(), root: z.string(), remote: z.string().optional() },
+    async ({ project, repo, root, remote }) => {
+      return runLogged("sync_branches", { project, repo, root, remote }, async () => {
+        const { syncBranches } = await import("../branches/sync.js");
+        const recs = await syncBranches({ project, repo, root, remote: remote ?? null });
+        return text(recs.map(jsonable));
+      });
+    },
+  );
+  server.tool(
+    "list_branches",
+    "List branches in the catalog (filterable by project/repo/kind), newest first.",
+    { project: z.string().optional(), repo: z.string().optional(), kind: z.string().optional(), limit: z.number().int().min(1).max(500).default(200) },
+    async ({ project, repo, kind, limit }) => {
+      return runLogged("list_branches", { project, repo, kind, limit }, async () => {
+        const { BranchStore } = await import("../branches/store.js");
+        return text((await new BranchStore().list({ project, repo, kind, limit })).map(jsonable));
+      });
+    },
+  );
+  server.tool(
+    "delete_branch",
+    "Delete ONE branch from the catalog by (project, repo, name).",
+    { project: z.string(), repo: z.string(), name: z.string() },
+    async ({ project, repo, name }) => {
+      return runLogged("delete_branch", { project, repo, name }, async () => {
+        const { BranchStore } = await import("../branches/store.js");
+        return text({ project, repo, name, deleted: await new BranchStore().delete(project, repo, name) });
       });
     },
   );

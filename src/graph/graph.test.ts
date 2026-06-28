@@ -60,6 +60,7 @@ test("graphify: orchestrates fetch+build per project from a fake source", async 
     context: async () => [],
     softwares: async () => [],
     repos: async () => [],
+    branches: async () => [],
   };
   const all = await graphify(fake);
   assert.deepEqual(Object.keys(all), ["p1", "p2"]);
@@ -80,6 +81,10 @@ test("buildKnowledgeGraph: hierarchy contains edges + references cross-links", (
       context: [{ context_id: "ctx-123", title: "sess", repo: "api" }],
       softwares: [{ name: "schoolar", display_name: "Schoolar", projects: ["p"] }],
       repos: [{ name: "api", project: "p", software: "schoolar" }],
+      branches: [
+        { name: "main", repo: "api", kind: "main", environment: "prod", base: null },
+        { name: "feature/login", repo: "api", kind: "feature", environment: "none", base: "develop" },
+      ],
     },
     "p",
   );
@@ -98,6 +103,25 @@ test("buildKnowledgeGraph: hierarchy contains edges + references cross-links", (
   // ADR-0001 references the memory slug and ADR-0002.
   assert.ok(g.edges.some((e) => e.type === "references" && e.source === "adr:p:0001" && e.target === "mem:design"));
   assert.ok(g.edges.some((e) => e.type === "references" && e.source === "adr:p:0001" && e.target === "adr:p:0002"));
+  // Branches: 2 nodes; feature/login derives from develop (no develop node → derives edge dropped),
+  // and each branch attaches to its repo.
+  assert.equal(byKind("branch"), 2);
+  assert.ok(g.edges.some((e) => e.type === "contains" && e.source === "repo:p/api" && e.target === "branch:p/api/main"));
+});
+
+test("buildKnowledgeGraph: derives edge links a branch to its base when both exist", () => {
+  const g = buildKnowledgeGraph(
+    {
+      symbols: [], memory: [], decisions: [], context: [], softwares: [],
+      repos: [{ name: "api", project: "p" }],
+      branches: [
+        { name: "develop", repo: "api", kind: "develop", base: null },
+        { name: "feature/x", repo: "api", kind: "feature", base: "develop" },
+      ],
+    },
+    "p",
+  );
+  assert.ok(g.edges.some((e) => e.type === "derives" && e.source === "branch:p/api/feature/x" && e.target === "branch:p/api/develop"));
 });
 
 test("graphToDot: stable digraph output", () => {
