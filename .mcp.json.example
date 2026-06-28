@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "aitl-js": {
+      "command": "npm",
+      "args": ["--prefix", "/ABSOLUTE/PATH/TO/AITL-Harness-JS", "run", "mcp", "--silent"],
+      "env": {
+        "MONGODB_URI": "mongodb+srv://<user>:<password>@<cluster>.mongodb.net/aitl?appName=<app>",
+        "DATABASE_URI": "mongodb+srv://<user>:<password>@<cluster>.mongodb.net/aitl?appName=<app>",
+        "MONGODB_DB": "aitl",
+        "EMBEDDING_PROVIDER": "local",
+        "EMBEDDING_MODEL": "Xenova/all-MiniLM-L6-v2",
+        "EMBEDDING_DIMS": "384",
+        "AITL_MCP_LOG_FILE": "logs/aitl-js-mcp.log",
+        "AITL_MCP_LOG_RESULT_CHARS": "8000",
+        "OPENROUTER_API_KEY": "<set-this-to-run-aitl-run>"
+      }
+    }
+  }
+}

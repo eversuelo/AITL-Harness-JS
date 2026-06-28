@@ -170,6 +170,10 @@ export async function runAgent(
   let finalText = "";
   let gateDenials = 0;
   let it = 0;
+  // Per-run rollups so the run record exposes the measurable totals (tokens, tool calls).
+  let tokIn = 0;
+  let tokOut = 0;
+  let toolCalls = 0;
   try {
     for (; it < maxIters; it++) {
       if (ctx.overBudget(convo)) {
@@ -205,6 +209,9 @@ export async function runAgent(
           tokens: turn.usage.output,
         }),
       );
+      tokIn += turn.usage.input ?? 0;
+      tokOut += turn.usage.output ?? 0;
+      toolCalls += turn.tool_calls.length;
       await store.logEvent(makeEvent({ project, run_id: runId, type: "loop_iter", payload: { iter: it } }));
       finalText = turn.text || finalText;
 
@@ -302,7 +309,19 @@ export async function runAgent(
 
   await store.db
     .collection("runs")
-    .updateOne({ _id: runId as never }, { $set: { status: "done", ended_at: new Date() } });
+    .updateOne(
+      { _id: runId as never },
+      {
+        $set: {
+          status: "done",
+          ended_at: new Date(),
+          token_usage: { input: tokIn, output: tokOut },
+          iters: it,
+          tool_calls: toolCalls,
+          gate_denials: gateDenials,
+        },
+      },
+    );
   return {
     run_id: runId,
     final_text: finalText,

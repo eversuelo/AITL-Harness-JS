@@ -1,0 +1,9 @@
+{
+  "name": "schoolar-mvp",
+  "private": true,
+  "type": "module",
+  "description": "Minimal vertical slice (tenant + student) — measurable target for task T1.",
+  "scripts": {
+    "test": "node --import tsx --test student.test.ts"
+  }
+}

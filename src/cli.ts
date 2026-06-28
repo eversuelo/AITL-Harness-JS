@@ -152,17 +152,61 @@ program
   .argument("<task>", "Task prompt.")
   .requiredOption("--project <project>", "Project scope.")
   .option("--model <m>", "primary | secondary | openrouter", "primary")
+  .option("--bare", "C0 baseline: no hydration, no skills, no gates (improvised agent).")
   .description("Run the model-agnostic agent loop, persisting the run/transcript to Mongo.")
   .action(async (task, opts) => {
     const { runAgent } = await import("./orchestration/graph.js");
     const { getProvider } = await import("./providers/base.js");
-    // Tools + default safety gates are now installed by runAgent itself (see #1 enforcement).
+    // --bare operationalizes condition C0 (memory/specs/gates OFF); default is C2 (all ON).
     const result = await runAgent(task, opts.project, {
       provider: await getProvider(opts.model),
       installDefaultTools: true,
+      ...(opts.bare ? { hydrate: false, skills: false, gates: false } : {}),
     });
     console.log(`run_id=${result.run_id} iters=${result.iters} gate_denials=${result.gate_denials}`);
     console.log(result.final_text);
+    await closeClient();
+  });
+
+program
+  .command("run-show")
+  .argument("<runId>", "Run id to summarize.")
+  .description("Show a run's measurable totals: tokens, iterations, tool calls, gate denials, hydrate.")
+  .action(async (runId) => {
+    const { getDb } = await import("./db/client.js");
+    const db = getDb();
+    const run = await db.collection("runs").findOne({ _id: runId as never });
+    if (!run) {
+      console.log(`(no run '${runId}')`);
+      await closeClient();
+      return;
+    }
+    // Event counts (counted from the events collection) complement the run rollup.
+    const events = await db.collection("events").find({ run_id: runId }).toArray();
+    const byType: Record<string, number> = {};
+    let hydrateSections: Record<string, unknown> | null = null;
+    for (const e of events) {
+      const t = String(e.type);
+      byType[t] = (byType[t] ?? 0) + 1;
+      if (t === "hydrate") hydrateSections = (e.payload as Record<string, unknown>) ?? null;
+    }
+    const tu = (run.token_usage as { input?: number; output?: number }) ?? {};
+    const ms = run.started_at && run.ended_at ? new Date(run.ended_at as string).getTime() - new Date(run.started_at as string).getTime() : null;
+    console.log(JSON.stringify({
+      run_id: runId,
+      project: run.project,
+      model: run.model,
+      status: run.status,
+      started_at: run.started_at,
+      ended_at: run.ended_at,
+      duration_ms: ms,
+      tokens: { input: tu.input ?? 0, output: tu.output ?? 0, total: (tu.input ?? 0) + (tu.output ?? 0) },
+      iters: run.iters ?? null,
+      tool_calls: run.tool_calls ?? byType.tool_call ?? 0,
+      gate_denials: run.gate_denials ?? byType.gate ?? 0,
+      event_counts: byType,
+      hydrate: hydrateSections,
+    }, null, 2));
     await closeClient();
   });
 
