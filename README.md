@@ -181,8 +181,15 @@ fricción hace que el agente las evite). En `.claude/settings.local.json`:
 `mcp__aitl-js__search_memory`, `mcp__aitl-js__write_memory`, etc.
 
 **3. Contrato de operación que el modelo lee.** Claude Code carga `CLAUDE.md`
-automáticamente; genera además un `AGENTS.md` que ordena consultar el MCP **antes** de cada
-decisión y persistir **después**:
+automáticamente. Genera un `CLAUDE.md` inicializador que cablea el repo a este harness
+(contrato MCP + medición + checklist de setup con `.mcp.json`/permisos/hooks):
+
+```bash
+aitl init claude --project aitl-js --mcp aitl-js --out CLAUDE.md
+```
+
+No sobrescribe un `CLAUDE.md` existente salvo que pases `--force`. Para otros agentes
+(Cursor, etc.) existe el equivalente `AGENTS.md`:
 
 ```bash
 aitl init agent --project aitl-js --mcp aitl-js --out AGENTS.md
@@ -234,6 +241,7 @@ En resumen: capas 1–3 hacen que el MCP esté disponible, sin fricción y "orde
 | `aitl repomap --root . --project demo` | Construye mapa de repo. |
 | `aitl adr-sync --dir docs/adr --project demo` | Espeja ADRs en Mongo. |
 | `aitl export --adapter cursor --project demo` | Proyecta canon a herramientas externas. |
+| `aitl init claude --project demo --mcp aitl-js` | Genera un `CLAUDE.md` inicializador que cablea Claude Code a este harness (contrato MCP + medición + setup). |
 | `aitl mcp` | Arranca servidor MCP stdio. |
 | `aitl ui --project demo` | Arranca API + SPA (Memory · Decisions · Prompts · **Runs/métricas** · Graph · Knowledge map). |
 

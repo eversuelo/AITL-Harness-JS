@@ -38,7 +38,11 @@ const NO_DB_COMMANDS = new Set(["interactive", "menu", "config", "init", "help",
 // Resolve the working MongoDB URI (primary → fallback) once, before any DB command runs,
 // so every subcommand inherits the resilient local-and/or-Atlas connection.
 program.hook("preAction", async (_thisCommand, actionCommand) => {
-  if (NO_DB_COMMANDS.has(actionCommand.name())) return;
+  // Skip the DB probe if the command OR any ancestor is a no-DB command, so nested
+  // subcommands (e.g. `init claude`, `config set`) also stay offline and exit cleanly.
+  for (let cmd: Command | null = actionCommand; cmd; cmd = cmd.parent) {
+    if (NO_DB_COMMANDS.has(cmd.name())) return;
+  }
   const { connectWithFallback } = await import("./db/client.js");
   try {
     const result = await connectWithFallback();
@@ -1104,6 +1108,26 @@ init
       interactive: opts.interactive,
     });
     console.log(`Wrote agent guide to ${path}.`);
+  });
+
+init
+  .command("claude")
+  .option("-i, --interactive", "Prompt for the values instead of using defaults.", false)
+  .option("--out <file>", "Output markdown file.", "CLAUDE.md")
+  .option("--project <project>", "Project scope the session should use.", "aitl-js")
+  .option("--mcp <name>", "MCP server name to consult.", "aitl-js")
+  .option("--force", "Overwrite an existing CLAUDE.md.", false)
+  .description("Create a CLAUDE.md initializer wiring Claude Code to this harness (MCP contract + measurement + setup).")
+  .action(async (opts) => {
+    const { writeClaudeGuide } = await import("./init/claude.js");
+    const path = await writeClaudeGuide({
+      out: opts.out,
+      project: opts.project,
+      mcp: opts.mcp,
+      interactive: opts.interactive,
+      force: opts.force,
+    });
+    console.log(`Wrote CLAUDE.md initializer to ${path}.`);
   });
 
 // ── migrate-atlas (copy a DB to another cluster, e.g. local → Atlas; data only) ──
