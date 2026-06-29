@@ -48,6 +48,7 @@ Indice de lectura para explorar AITL-Harness-JS en GitHub.
 | [MONGODB-ATLAS.md](MONGODB-ATLAS.md) | MongoDB local y Atlas cloud. |
 | [GOOGLE-FREE.md](GOOGLE-FREE.md) | Perfil Google free tier. |
 | [RBAC-REGISTRO.md](RBAC-REGISTRO.md) | RBAC, registro root y permisos de usuarios/agentes. |
+| [token-accounting.md](token-accounting.md) | Cómo se cuentan los tokens en Runs (snapshot vs acumulado, caché). |
 
 ## Regla de navegacion
 
