@@ -10,7 +10,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { makeEvent, makeRun } from "../memory/schemas.js";
+import { makeRun } from "../memory/schemas.js";
+import { makeEvent } from "../models/event.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { type Provider, getProvider } from "../providers/base.js";
 import { type RunAgentOpts, type RunAgentResult, runAgent } from "./graph.js";

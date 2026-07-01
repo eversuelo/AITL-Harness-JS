@@ -11,7 +11,9 @@
 
 import { randomUUID } from "node:crypto";
 import { hydrate } from "../memory/lifecycle.js";
-import { makeEvent, makeMessage, makeRun } from "../memory/schemas.js";
+import { makeRun } from "../memory/schemas.js";
+import { makeEvent } from "../models/event.model.js";
+import { makeMessage } from "../models/message.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { PromptStore } from "../prompts/store.js";
 import { classifySpec } from "../specs/classify.js";

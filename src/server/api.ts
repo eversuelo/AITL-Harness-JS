@@ -22,7 +22,8 @@
 
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import type { Server } from "node:http";
-import { MEMORY_TYPES, type MemoryType, makeMemoryDoc } from "../memory/schemas.js";
+import { MEMORY_TYPES, type MemoryType } from "../memory/schemas.js";
+import { makeMemoryDoc } from "../models/memory.model.js";
 import { recordAudit } from "../auth/audit.js";
 import {
   type AccessContext,

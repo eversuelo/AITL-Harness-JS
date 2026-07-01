@@ -8,7 +8,8 @@
 import { promises as fs } from "node:fs";
 import { basename, extname, join } from "node:path";
 import matter from "gray-matter";
-import { MEMORY_TYPES, type MemoryDoc, type MemoryType, makeMemoryDoc } from "../memory/schemas.js";
+import { MEMORY_TYPES, type MemoryType } from "../memory/schemas.js";
+import { type MemoryDoc, makeMemoryDoc } from "../models/memory.model.js";
 
 export const LINK_RE = /\[\[([^\]]+)\]\]/g;
 

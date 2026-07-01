@@ -10,7 +10,8 @@
 
 import { promises as fs } from "node:fs";
 import { extname } from "node:path";
-import { ROLES, type Message, type Role, makeMessage } from "../memory/schemas.js";
+import { ROLES, type Role } from "../memory/schemas.js";
+import { type Message, type MessageInput, makeMessage } from "../models/message.model.js";
 
 const MD_TURN_RE = /^##\s+(user|assistant|tool|system)\s*$/gim;
 
@@ -33,7 +34,7 @@ export async function parseJsonl(path: string, project: string, runId: string): 
         idx: idx++,
         role: coerceRole(String(obj.role ?? "user")),
         content: String(obj.content ?? ""),
-        tool_calls: (obj.tool_calls as Message["tool_calls"]) ?? [],
+        tool_calls: (obj.tool_calls as MessageInput["tool_calls"]) ?? [],
         tokens: Number(obj.tokens ?? 0),
       }),
     );

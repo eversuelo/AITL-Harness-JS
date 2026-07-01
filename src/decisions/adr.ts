@@ -8,10 +8,9 @@
 
 import { promises as fs } from "node:fs";
 import { basename, extname, join } from "node:path";
-import type { Db } from "mongodb";
-import { getDb } from "../db/client.js";
+import { ensureMongoose } from "../db/mongoose.js";
 import { embedOne } from "../ingest/embedder.js";
-import { type ADR, makeADR } from "../memory/schemas.js";
+import { type ADR, DecisionModel, makeADR } from "../models/decision.model.js";
 import { ADR_CONTENT_FIELDS, type VersioningActor, archiveAndBumpVersion } from "../memory/versioning.js";
 
 const ID_RE = /ADR-?(\d+)/i;
@@ -44,22 +43,14 @@ export async function parseAdrMarkdown(path: string, project: string): Promise<A
 }
 
 export class ADRStore {
-  private db: Db;
-
-  constructor(db?: Db) {
-    this.db = db ?? getDb();
-  }
-
   async upsert(adr: ADR, opts: { embed?: boolean; actor?: VersioningActor; branch?: string | null } = {}): Promise<string> {
+    await ensureMongoose();
     if (opts.embed !== false) {
       adr.embedding = await embedOne(`${adr.title}\n${adr.context}\n${adr.decision}`);
     }
     // Archive the prior version (if content changed) and set adr.version BEFORE overwrite.
     await archiveAndBumpVersion({
-      db: this.db,
       kind: "decision",
-      liveCollection: "decisions",
-      historyCollection: "decisions_history",
       query: { project: adr.project, id: adr.id },
       nextDoc: adr,
       contentFields: ADR_CONTENT_FIELDS,
@@ -67,9 +58,7 @@ export class ADRStore {
       actor: opts.actor,
       branch: opts.branch,
     });
-    await this.db
-      .collection("decisions")
-      .updateOne({ project: adr.project, id: adr.id }, { $set: adr }, { upsert: true });
+    await DecisionModel.updateOne({ project: adr.project, id: adr.id }, { $set: adr }, { upsert: true });
     return adr.id;
   }
 

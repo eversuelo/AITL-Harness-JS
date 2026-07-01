@@ -10,7 +10,8 @@
  */
 
 import type { Provider } from "../providers/base.js";
-import type { MemoryDoc, Message } from "./schemas.js";
+import type { MemoryDoc } from "../models/memory.model.js";
+import type { Message } from "../models/message.model.js";
 
 // Default seed taxonomy; persisted/extended via the `categories` collection.
 export const DEFAULT_RULES: Record<string, RegExp[]> = {

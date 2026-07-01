@@ -15,7 +15,7 @@
 import { embedOne } from "../ingest/embedder.js";
 import type { Provider } from "../providers/base.js";
 import { Classifier } from "./classifier.js";
-import { type MemoryDoc, makeMemoryDoc } from "./schemas.js";
+import { type MemoryDoc, makeMemoryDoc } from "../models/memory.model.js";
 import { MemoryStore } from "./store.js";
 
 /** Categories that mark a run as worth remembering beyond a plain summary. */

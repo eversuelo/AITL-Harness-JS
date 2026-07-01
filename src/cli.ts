@@ -206,7 +206,7 @@ program
   .action(async (runId, opts) => {
     const { getDb } = await import("./db/client.js");
     const { MemoryStore } = await import("./memory/store.js");
-    const { makeEvent } = await import("./memory/schemas.js");
+    const { makeEvent } = await import("./models/event.model.js");
     const run = await getDb().collection("runs").findOne({ _id: runId as never });
     const project = (run?.project as string) ?? "unknown";
     await new MemoryStore().logEvent(makeEvent({ project, run_id: runId, type: "human_intervention", payload: { reason: opts.reason, minutes: Number(opts.minutes) } }));

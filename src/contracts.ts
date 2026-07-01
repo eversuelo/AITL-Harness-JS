@@ -5,9 +5,10 @@
  * (`docs/parity-contract.json`). The Python port mirrors it in `aitl/contracts.py`.
  *
  * It does two things:
- *   1. Re-exports the durable document schemas under their canonical names
+ *   1. Re-exports the durable document types under their canonical names
  *      (`DecisionDoc` = ADR, `SymbolDoc` = Symbol, `LoopEvent` = Event) so both
- *      ecosystems use the same names without breaking existing data/imports.
+ *      ecosystems use the same names without breaking existing data/imports. The core
+ *      durable docs now come from the Mongoose models; `ToolCall`/`Run` are still Zod.
  *   2. Defines the structural *ports* the core depends on (ProviderPort, ToolPort,
  *      MemoryPort, LoopStrategy) plus small value types (ToolCall, GateResult, MetricRecord).
  *
@@ -17,25 +18,18 @@
 
 import { z } from "zod";
 
-// ── 1. canonical aliases for the durable document schemas ────────────────────
-import {
-  ADRSchema as DecisionDocSchema,
-  EventSchema as LoopEventSchema,
-  ToolCallSchema,
-} from "./memory/schemas.js";
-import type {
-  ADR as DecisionDoc,
-  Event as LoopEvent,
-  MemoryDoc,
-  Message,
-  Run,
-  ToolCall,
-} from "./memory/schemas.js";
+// ── 1. canonical aliases for the durable document types ──────────────────────
+import { ToolCallSchema } from "./memory/schemas.js";
+import type { Run, ToolCall } from "./memory/schemas.js";
+import type { ADR as DecisionDoc } from "./models/decision.model.js";
+import type { Event as LoopEvent } from "./models/event.model.js";
+import type { MemoryDoc } from "./models/memory.model.js";
+import type { Message } from "./models/message.model.js";
 import type { Category } from "./models/category.model.js";
 import type { Convention } from "./models/convention.model.js";
 import type { Symbol as SymbolDoc } from "./models/symbol.model.js";
 
-export { DecisionDocSchema, LoopEventSchema, ToolCallSchema };
+export { ToolCallSchema };
 export type { Run, Message, MemoryDoc, DecisionDoc, SymbolDoc, Convention, Category, LoopEvent, ToolCall };
 
 // ── 2. small value types (previously inline) ─────────────────────────────────

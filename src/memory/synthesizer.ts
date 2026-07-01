@@ -19,7 +19,8 @@
 import { settings } from "../config.js";
 import { embedOne } from "../ingest/embedder.js";
 import type { Provider } from "../providers/base.js";
-import { type MemoryDoc, makeEvent, makeMemoryDoc } from "./schemas.js";
+import { makeEvent } from "../models/event.model.js";
+import { type MemoryDoc, makeMemoryDoc } from "../models/memory.model.js";
 import { MemoryStore } from "./store.js";
 
 export class Synthesizer {

@@ -10,7 +10,7 @@
  */
 
 import { embedOne } from "../ingest/embedder.js";
-import { type MemoryDoc, makeMemoryDoc } from "../memory/schemas.js";
+import { type MemoryDoc, makeMemoryDoc } from "../models/memory.model.js";
 import { MemoryStore } from "../memory/store.js";
 
 export interface SpecSynthesisArgs {

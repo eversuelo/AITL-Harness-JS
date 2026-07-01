@@ -28,7 +28,8 @@ import { McpToolCallModel } from "../models/mcpToolCall.model.js";
 import { embedOne } from "../ingest/embedder.js";
 import { extractLinks, parseMarkdownDir } from "../ingest/markdown.js";
 import { Classifier } from "../memory/classifier.js";
-import { MEMORY_TYPES, type MemoryType, makeMemoryDoc } from "../memory/schemas.js";
+import { MEMORY_TYPES, type MemoryType } from "../memory/schemas.js";
+import { makeMemoryDoc } from "../models/memory.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { ADRStore } from "../decisions/adr.js";
 import { RepoMap } from "../repomap/store.js";
@@ -652,7 +653,7 @@ export function buildServer(): McpServer {
     },
     async ({ project, id, title, context, decision, consequences, status }) => {
       return runLogged("record_decision", { project, id, title, context, decision, consequences, status }, async () => {
-        const { makeADR } = await import("../memory/schemas.js");
+        const { makeADR } = await import("../models/decision.model.js");
         const adr = makeADR({ project, id, title, context, decision, consequences, status });
         const a = mcpActor();
         await new ADRStore().upsert(adr, { actor: { id: a.id, role: a.role }, branch: currentBranch() });
@@ -1039,7 +1040,7 @@ export function buildServer(): McpServer {
     { project: z.string(), run_id: z.string(), reason: z.string(), minutes: z.number().default(0) },
     async ({ project, run_id, reason, minutes }) => {
       return runLogged("record_human_intervention", { project, run_id, reason, minutes }, async () => {
-        const { makeEvent } = await import("../memory/schemas.js");
+        const { makeEvent } = await import("../models/event.model.js");
         await new MemoryStore().logEvent(makeEvent({ project, run_id, type: "human_intervention", payload: { reason, minutes } }));
         return text({ ok: true, run_id, minutes });
       });
