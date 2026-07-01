@@ -12,7 +12,8 @@
  */
 
 import { promises as fs } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, relative, sep } from "node:path";
+import ignore, { type Ignore } from "ignore";
 
 // node types that denote a "definition" across common tree-sitter grammars
 const DEF_NODE_TYPES = new Set([
@@ -166,16 +167,43 @@ export async function parseFile(path: string): Promise<FileSymbols> {
   return fsym;
 }
 
-async function walkSources(root: string, exts: Set<string>): Promise<string[]> {
-  const entries = await fs.readdir(root, { withFileTypes: true });
+/**
+ * Load `<root>/.gitignore` (if present) into an `ignore()` matcher so the walk skips
+ * anything git ignores (e.g. `dist/`, `logs/`). Returns null when there is no
+ * `.gitignore` — callers then fall back to the baseline `.git`/`node_modules` skip.
+ */
+async function loadIgnore(root: string): Promise<Ignore | null> {
+  try {
+    const spec = await fs.readFile(join(root, ".gitignore"), "utf-8");
+    return ignore().add(spec);
+  } catch {
+    return null; // no .gitignore → only the baseline skip applies
+  }
+}
+
+/**
+ * Recursively collect source files under `dir`. Skips `.git`/`node_modules` (baseline,
+ * covers the no-`.gitignore` case) and anything the `ignore()` matcher rejects, matched
+ * on the path relative to `root` (where `.gitignore` lives). `ignore` wants POSIX-style,
+ * root-relative paths, and a trailing "/" so directory patterns like `dist/` match.
+ */
+async function walkDir(dir: string, root: string, exts: Set<string>, ig: Ignore | null): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
   const out: string[] = [];
   for (const e of entries) {
     if (e.name === ".git" || e.name === "node_modules") continue;
-    const full = join(root, e.name);
-    if (e.isDirectory()) out.push(...(await walkSources(full, exts)));
+    const full = join(dir, e.name);
+    const rel = relative(root, full).split(sep).join("/"); // POSIX, root-relative
+    if (ig && rel && ig.ignores(e.isDirectory() ? `${rel}/` : rel)) continue;
+    if (e.isDirectory()) out.push(...(await walkDir(full, root, exts, ig)));
     else if (e.isFile() && exts.has(extname(e.name))) out.push(full);
   }
   return out;
+}
+
+async function walkSources(root: string, exts: Set<string>): Promise<string[]> {
+  const ig = await loadIgnore(root);
+  return walkDir(root, root, exts, ig);
 }
 
 export async function parseTree(root: string, exts?: string[]): Promise<FileSymbols[]> {

@@ -17,7 +17,7 @@ export function buildSymbolGraph(symbols: SymbolRow[], project: string): Graph {
   for (const s of symbols) {
     const nid = `sym:${s.file}::${s.name}`;
     if (s.name != null && !byName.has(s.name)) byName.set(s.name, nid);
-    nodes.push({ id: nid, label: String(s.name ?? ""), kind: "symbol", project, file: s.file, pagerank: Number(s.pagerank ?? 0) });
+    nodes.push({ id: nid, label: String(s.name ?? ""), kind: "symbol", project, file: s.file, pagerank: Number(s.pagerank ?? 0), branch: s.branch ?? null });
   }
   for (const s of symbols) {
     const src = `sym:${s.file}::${s.name}`;

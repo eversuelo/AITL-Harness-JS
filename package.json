@@ -55,6 +55,7 @@
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
     "gray-matter": "^4.0.3",
+    "ignore": "^7.0.5",
     "mongodb": "^6.8.0",
     "mongoose": "^9.7.3",
     "openai": "^4.56.0",

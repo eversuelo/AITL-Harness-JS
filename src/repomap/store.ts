@@ -7,9 +7,11 @@
  */
 
 import { promises as fs } from "node:fs";
+import { join, relative } from "node:path";
 import type { Db } from "mongodb";
 import { ensureMongoose } from "../db/mongoose.js";
 import { SymbolModel, makeSymbol } from "../models/symbol.model.js";
+import { currentBranch } from "../util/git.js";
 import { parseTree } from "./parser.js";
 import { rankSymbols, selectWithinBudget } from "./ranker.js";
 
@@ -30,12 +32,18 @@ export class RepoMap {
   async build(root: string, project: string, repo: string | null = null): Promise<number> {
     await ensureMongoose();
     const files = await parseTree(root);
+    // Relativize every path to `root` so stored keys are PORTABLE (e.g. `repomap/store.ts`,
+    // not `/abs/.../src/repomap/store.ts`). The ranker treats `file` as an opaque key, so
+    // relativizing before ranking keeps its keys consistent.
+    for (const f of files) f.file = relative(root, f.file);
     const scores = rankSymbols(files);
+    const branch = currentBranch(root); // stamp which branch this snapshot is for
 
     const mtimes = new Map<string, number>();
     for (const fsym of files) {
       try {
-        mtimes.set(fsym.file, (await fs.stat(fsym.file)).mtimeMs / 1000);
+        // `fsym.file` is now root-relative; resolve against `root` for the stat.
+        mtimes.set(fsym.file, (await fs.stat(join(root, fsym.file))).mtimeMs / 1000);
       } catch {
         mtimes.set(fsym.file, 0);
       }
@@ -47,6 +55,7 @@ export class RepoMap {
         makeSymbol({
           project,
           repo,
+          branch,
           file: fsym.file,
           name,
           kind,
@@ -66,6 +75,15 @@ export class RepoMap {
     const query: Record<string, unknown> = { project };
     if (opts.repo !== undefined) query.repo = opts.repo;
     const rows = await SymbolModel.find(query).lean();
+    // Staleness check: the stored snapshot is for one branch. If the working tree has since
+    // moved to a different branch, the map may be wrong. Warn (do NOT auto-rebuild).
+    const storedBranch = (rows[0] as { branch?: string | null } | undefined)?.branch ?? null;
+    const liveBranch = currentBranch();
+    if (rows.length && storedBranch !== liveBranch) {
+      console.error(
+        `[repomap] stale: symbols are for branch ${storedBranch}, current is ${liveBranch} — run 'aitl index-repo'`,
+      );
+    }
     const scores = new Map<string, number>();
     for (const r of rows) {
       scores.set(`${r.file}${String.fromCharCode(1)}${r.name}`, (r.pagerank as number) ?? 0);

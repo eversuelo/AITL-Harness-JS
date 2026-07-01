@@ -21,6 +21,7 @@ const symbolSchema = new Schema(
   {
     project: { type: String, required: true }, // Project scope; isolates multi-project memory.
     repo: { type: String, default: null }, // repo sub-scope within the project (ADR-0028)
+    branch: { type: String, default: null }, // git branch the snapshot was built for (mirrors memory/decisions)
     file: { type: String, required: true },
     name: { type: String, required: true },
     kind: { type: String, required: true },
