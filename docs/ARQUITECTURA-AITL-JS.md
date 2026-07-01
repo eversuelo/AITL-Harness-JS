@@ -1,32 +1,40 @@
-# Arquitectura de AITL-Harness-JS / aitl-js
+# Architecture of AITL-Harness-JS / aitl-js
 
-Fecha: 2026-06-24
+This document is the **canonical description of the TypeScript architecture** of the
+`aitl-js` package (published as `aitl-mcp`, public binary `aitl`). The project's goal is a
+model-agnostic agent harness with durable memory, recoverable context, an MCP server, a
+CLI, an admin UI and an evaluation base to measure the harness's impact against models with
+no scaffolding.
 
-Este documento resume la arquitectura real del paquete TypeScript `aitl-js`, cuyo binario publico es `aitl`. El objetivo del proyecto es dar un harness agnostico de modelo con memoria durable, contexto recuperable, MCP, CLI, UI de administracion y una base de evaluacion para medir el impacto del harness contra modelos sin scaffolding.
+## Executive summary
 
-## Resumen ejecutivo
+AITL-Harness-JS is organized around four ideas:
 
-AITL-Harness-JS esta organizado alrededor de cuatro ideas:
+1. **Usage surfaces**: the `aitl` CLI, the `aitl mcp` MCP server, the `aitl ui` API/UI, and
+   consumption as a library via `src/index.ts`.
+2. **Model-agnostic core**: the agent loop depends on small ports (`Provider`, `Tool`,
+   `MemoryStore`) rather than on concrete SDKs.
+3. **Durable state in MongoDB**: runs, messages, memory, decisions, symbols, events,
+   prompts and MCP context live in Mongo/Atlas with scalar, text and vector indexes.
+4. **Context engineering**: before each run the harness retrieves relevant memory and
+   skills; after each run it summarizes the session into durable memory.
 
-1. **Superficies de uso**: CLI `aitl`, servidor MCP `aitl mcp`, API/UI `aitl ui` y consumo como libreria via `src/index.ts`.
-2. **Nucleo agnostico**: el loop de agente depende de puertos pequenos (`Provider`, `Tool`, `MemoryStore`) y no de SDKs concretos.
-3. **Estado durable en MongoDB**: runs, mensajes, memoria, decisiones, simbolos, eventos, prompts y contexto MCP viven en Mongo/Atlas con indices escalares, texto y vectoriales.
-4. **Context engineering**: antes de cada run se recupera memoria y skills relevantes; despues se resume la sesion a memoria durable.
+The architecture is on a solid track but still carries maturity debt: it needs contract
+tests, real benchmarks, tool hardening, a production build of the UI, real streaming in the
+provider port, and complete tree-sitter/grammar configuration so RepoMap is dependable.
 
-La arquitectura esta bien encaminada, pero todavia tiene deuda de madurez: faltan pruebas de contrato, benchmarks reales, hardening de tools, empaquetado productivo de la UI, streaming real en el puerto de provider y una configuracion completa de tree-sitter/grammars para que RepoMap sea confiable.
-
-## Vista de alto nivel
+## High-level view
 
 ```mermaid
 flowchart LR
-  subgraph Entradas["Superficies de entrada"]
+  subgraph Entradas["Entry surfaces"]
     CLI["CLI aitl\nsrc/cli.ts"]
     MCP["MCP stdio/http\nsrc/mcpserver/server.ts"]
     WEB["Web UI React\nweb/src/App.tsx"]
     LIB["Library API\nsrc/index.ts"]
   end
 
-  subgraph Core["Nucleo del harness"]
+  subgraph Core["Harness core"]
     ORCH["Agent loop\nsrc/orchestration/graph.ts"]
     CTX["ContextManager\nsrc/context/manager.ts"]
     TOOLS["ToolRegistry\nsrc/tools/*"]
@@ -35,12 +43,12 @@ flowchart LR
     SKILLS["Project skills router\nsrc/projectctx/router.ts"]
   end
 
-  subgraph Persistencia["Persistencia durable"]
+  subgraph Persistencia["Durable persistence"]
     STORE["MemoryStore / stores\nsrc/memory/store.ts\nsrc/prompts/store.ts\nsrc/projectctx/store.ts"]
     DB["MongoDB / Atlas\nVector Search + text indexes"]
   end
 
-  subgraph Integraciones["Integraciones y proyecciones"]
+  subgraph Integraciones["Integrations and projections"]
     REPO["RepoMap\nTree-sitter + PageRank"]
     ADR["ADR sync\nsrc/decisions/adr.ts"]
     ADAPT["Adapters\nAGENTS.md, Cursor, Copilot,\nAntigravity, Kiro, Trae"]
@@ -71,7 +79,7 @@ flowchart LR
   ADR --> DB
 ```
 
-## Flujo principal de un run
+## Main flow of a run
 
 ```mermaid
 sequenceDiagram
@@ -94,17 +102,17 @@ sequenceDiagram
   Loop->>Store: append user message
   Store->>DB: messages
 
-  loop Hasta maxIters o sin tool calls
+  loop Until maxIters or no tool calls
     Loop->>Provider: chat(messages, tools, system preamble)
     Provider-->>Loop: text + tool_calls + usage
     Loop->>Store: append assistant message + loop event
     Store->>DB: messages/events
-    alt hay tool calls
+    alt tool calls present
       Loop->>Tools: call(name, input)
       Tools-->>Loop: result text
       Loop->>Store: append tool message + event
       Store->>DB: messages/events
-    else sin tool calls
+    else no tool calls
       Loop-->>Entry: final_text
     end
   end
@@ -114,7 +122,7 @@ sequenceDiagram
   Loop->>DB: mark run done
 ```
 
-## Modelo durable
+## Durable model
 
 ```mermaid
 erDiagram
@@ -183,34 +191,68 @@ erDiagram
   }
 ```
 
-## Modulos principales
+## Main modules
 
-| Area | Archivos | Responsabilidad |
+| Area | Files | Responsibility |
 |---|---|---|
-| Configuracion | `src/config.ts`, `src/config/store.ts` | Resuelve `process.env`, `.env`, `~/.aitl/config.json`, defaults y normalizacion de URI Mongo. |
-| DB | `src/db/client.ts`, `src/db/indexes.ts` | Cliente Mongo compartido, fallback primary->fallback, colecciones e indices. |
-| Contratos | `src/contracts.ts`, `src/memory/schemas.ts` | Tipos canonicos y esquemas Zod para documentos durables. |
-| Providers | `src/providers/*` | Puerto de modelo para Gemini, OpenAI y Anthropic. |
-| Orquestacion | `src/orchestration/graph.ts` | Loop prompt->modelo->tools->persistencia; LangGraph opcional. |
-| Memoria | `src/memory/*` | Clasificacion, busqueda, hidratacion, resumen de sesion y sintesis. |
-| Tools | `src/tools/*`, `src/hooks/gates.ts` | Herramientas de FS/shell y gates deterministas. |
-| MCP | `src/mcpserver/server.ts` | Tools MCP para memoria, prompts, contexto MCP, ADRs, repomap, agents/skills y graphify. |
-| RepoMap | `src/repomap/*` | Parser tree-sitter, ranking PageRank y cache de simbolos. |
-| Project context | `src/projectctx/*` | Definiciones durables de agents/skills y routing de skills al prompt. |
-| UI | `src/server/*`, `web/*` | API HTTP local y SPA React para memoria, decisiones y prompts. |
-| Adapters | `src/adapters/*` | Exporta canon a formatos de herramientas externas. |
-| Evaluacion | `src/eval/runner.ts` | Contrato de evaluacion; benchmarks concretos pendientes. |
+| Configuration | `src/config.ts`, `src/config/store.ts` | Resolves `process.env`, `.env`, `~/.aitl/config.json`, defaults and Mongo URI normalization. |
+| DB | `src/db/client.ts`, `src/db/mongoose.ts`, `src/db/indexes.ts` | Shared Mongo/Mongoose connection, primary→fallback, collections and indexes. |
+| Data models | `src/models/*.model.ts` | **Mongoose models** — the single source of shape, validation and types for every durable collection. |
+| Providers | `src/providers/*` | Model port; OpenRouter (OpenAI-compatible) is the primary provider, with legacy Gemini/OpenAI/Anthropic paths. |
+| Orchestration | `src/orchestration/graph.ts` | Loop prompt→model→tools→persistence; LangGraph optional. |
+| Memory | `src/memory/*` | Classification, search, hydration, session summary and synthesis. |
+| Tools | `src/tools/*`, `src/hooks/gates.ts` | FS/shell tools and deterministic gates. |
+| MCP | `src/mcpserver/server.ts` | MCP tools for memory, prompts, MCP context, ADRs, repomap, agents/skills and graphify. |
+| RepoMap | `src/repomap/*` | Tree-sitter parser, PageRank ranking and a branch-aware symbol cache. |
+| Project context | `src/projectctx/*` | Durable agent/skill definitions and skill routing into the prompt. |
+| Roles | `src/roles/*` | Composable engineering roles (review/pair/gate) that produce a DecisionBrief. |
+| UI | `src/server/*`, `web/*` | Local HTTP API and React SPA for memory, decisions, prompts and runs. |
+| Adapters | `src/adapters/*` | Export canonical artifacts to external-tool formats. |
+| Evaluation | `src/eval/runner.ts` | Evaluation contract; concrete benchmarks pending. |
 
-## Superficie MCP
+### Data layer (Mongoose)
+
+The durable data layer is defined by **Mongoose models in `src/models/*.model.ts`**. This
+replaces the earlier combination of the raw `mongodb` driver plus Zod document schemas
+(`src/memory/schemas.ts`): Mongoose is now the single source of document shape, validation
+and TypeScript types (via `InferSchemaType`). See ADR-0036.
+
+Key points:
+
+- `src/db/mongoose.ts` owns the shared Mongoose connection and `BASE_SCHEMA_OPTS`, which
+  keeps documents **byte-compatible** with the pre-migration driver-written docs (no `__v`,
+  no auto timestamps for app-managed `created_at`/`updated_at`, empty `{}` preserved).
+- Sensitive and index-critical collections (e.g. `users`) intentionally do **not** declare
+  their unique indexes in the model — those live in `src/db/indexes.ts` and are created by
+  `aitl init-db`, so index management stays in one place.
+- `src/contracts.ts` still defines the model-agnostic ports and value types
+  (`ProviderPort`, `ToolPort`, `MemoryPort`, `LoopStrategy`, `ToolCall`, `GateResult`,
+  `MetricRecord`, …); the domain contracts are unchanged by the storage migration.
+
+## Ports and adapters (hexagonal)
+
+The **core** (loop, context, memory) depends **only on ports** (`src/contracts.ts`), never
+on a concrete SDK. That is what makes the harness agnostic to the model, the tools and the
+storage:
+
+- **`ProviderPort`** — the chat/completion interface implemented by the OpenRouter-backed
+  provider (and legacy Gemini/OpenAI/Anthropic).
+- **`ToolPort` / `ToolRegistry`** — filesystem, shell and other tools exposed to the model
+  as provider-agnostic schemas.
+- **`MemoryPort` / `MemoryStore`** — durable memory read/write, backed by the Mongoose
+  models over MongoDB/Atlas.
+- **`LoopStrategy`** — the agent loop policy (single-shot `runAgent`, optional LangGraph).
+
+## MCP surface
 
 ```mermaid
 flowchart TD
   MCP["aitl-js MCP server"]
 
-  MCP --> MEM["Memoria\nsearch_memory\nwrite_memory\ningest_path"]
-  MCP --> CTX["Contexto MCP\nsave_mcp_context\nlist_mcp_context\nsearch_mcp_context"]
+  MCP --> MEM["Memory\nsearch_memory\nwrite_memory\ningest_path"]
+  MCP --> CTX["MCP context\nsave_mcp_context\nlist_mcp_context\nsearch_mcp_context"]
   MCP --> PROMPTS["Prompt history\nrecord_prompt\nlist_prompts\nsearch_prompts"]
-  MCP --> ADRS["Decisiones\nlist_decisions\nrecord_decision"]
+  MCP --> ADRS["Decisions\nlist_decisions\nrecord_decision"]
   MCP --> REPO["Repo graph\nget_repomap\ngraphify"]
   MCP --> AGENTS["Agents\nwrite/get/list/search/delete_agent"]
   MCP --> SKILLS["Skills\nwrite/get/list/search/delete_skill"]
@@ -224,68 +266,86 @@ flowchart TD
   SKILLS --> DB
 ```
 
-Esta superficie es la parte mas fuerte del proyecto porque convierte el harness en memoria compartida para otros clientes. Tambien es donde mas conviene cuidar compatibilidad de schemas, versionado y observabilidad.
+This surface is the strongest part of the project because it turns the harness into shared
+memory for other clients. It is also where schema compatibility, versioning and
+observability matter most. Beyond the tools above, the server also exposes software/repo
+catalog, branches, roles, memory/decision version history and `record_human_intervention`
+(see the full list in the top-level README).
 
-## Fortalezas actuales
+## Current strengths
 
-| Fortaleza | Por que importa |
+| Strength | Why it matters |
 |---|---|
-| Nucleo provider-agnostic | Cambiar Gemini/OpenAI/Anthropic no obliga a cambiar el loop. |
-| Mongo como store unico | CLI, MCP y UI leen/escriben el mismo estado durable. |
-| Hydrate + summarize | El harness recupera contexto antes del trabajo y guarda memoria al terminar. |
-| MCP con logs de tool calls | Permite auditar uso real desde clientes externos. |
-| ADRs en git y Mongo | Las decisiones quedan versionadas y consultables semanticamente. |
-| Config global `~/.aitl` | Facilita instalacion global y evita depender de un checkout local. |
-| Fallback vector->text->recent | La memoria sigue funcionando aunque Atlas Vector Search o embeddings fallen. |
-| Adapters para ecosistema | Puede proyectar el canon a herramientas como Cursor, Copilot o AGENTS.md. |
+| Provider-agnostic core | Swapping the model backend does not force changes to the loop. |
+| Mongo as the single store | CLI, MCP and UI read/write the same durable state. |
+| Hydrate + summarize | The harness recovers context before work and stores memory when done. |
+| MCP with tool-call logs | Enables auditing real usage from external clients. |
+| ADRs in git and Mongo | Decisions stay versioned and semantically searchable. |
+| Global config in `~/.aitl` | Eases global install and avoids depending on a local checkout. |
+| Vector→text→recency fallback | Memory keeps working even if Atlas Vector Search or embeddings fail. |
+| Adapters for the ecosystem | Can project the canon to tools like Cursor, Copilot or AGENTS.md. |
 
-## Que falta o esta incompleto
+## What is missing or incomplete
 
-| Prioridad | Area | Estado actual | Riesgo | Mejora recomendada |
+| Priority | Area | Current state | Risk | Recommended improvement |
 |---|---|---|---|---|
-| P0 | Tests de contrato | `package.json` tiene `node --test`, pero no hay suite significativa. | Cambios de schemas/providers/MCP pueden romper compatibilidad sin aviso. | Agregar tests con fakes para `Provider`, `ToolRegistry`, `MemoryStore`, MCP tools y CLI smoke. |
-| P0 | Evaluacion | `EvalRunner` define contrato, pero benchmarks y verificacion estan TODO. | La tesis no puede medir delta harness vs bare model con rigor. | Implementar al menos un benchmark pequeno local primero; luego SWE-bench/Terminal-Bench/Aider. |
-| P0 | Seguridad de tools | `read_file`, `write_file` y `shell` dependen de gates; no resuelven workspace/canon paths por si mismos. | Riesgo de escrituras fuera de workspace o comandos peligrosos si un gate falta. | Envolver tools con root permitido, normalizacion de paths, denylist/allowlist y auditoria obligatoria. |
-| P0 | Secrets en logs/config | Hay redaccion basica y previews, pero no una politica central de datos sensibles. | Un prompt/tool result puede persistir secretos en `mcp_tool_calls` o contexto. | Crear sanitizador central para secretos y aplicarlo a MCP, events, prompts y messages. |
-| P1 | Streaming real | `capabilities().streaming` existe, pero el puerto solo expone `complete` y `chat`. | El TUI/live chat no puede mostrar tokens incrementales de forma limpia. | Extender ProviderPort con `chatStream` o eventos de loop observables. |
-| P1 | RepoMap | Parser degrada a vacio si faltan WASM grammars. | `get_repomap` puede devolver poca senal sin fallar claramente. | Empaquetar/resolver grammars, exponer diagnostico y test de repo TS real. |
-| P1 | LangGraph/checkpointing | `buildGraph` existe con optional deps, pero el CLI usa `runAgent`. | Resumibilidad/replay queda mas conceptual que operativa. | Agregar comando o modo `run --graph`, pruebas y docs de resume/replay. |
-| P1 | UI productiva | `aitl ui` usa API + Vite dev server. | Instalacion global depende de devDeps y no es una distribucion cerrada. | Build estatico de `web/`, servir assets desde Node y usar un solo puerto. |
-| P1 | Observabilidad | Se guardan events y MCP tool calls, pero no hay dashboard/metricas de runs. | Dificil depurar calidad, costos, latencia y fallos recurrentes. | Agregar vista de runs/events, latencia, tokens, errores por tool/provider. |
-| P1 | Migraciones de schema | Indices se crean idempotentemente, pero no hay version de schema/migraciones. | Evolucion de colecciones puede romper datos existentes. | Introducir `schema_migrations` y versionado por coleccion. |
-| P1 | Provider maturity | Tool calls estan normalizados, pero faltan tests contra corner cases de cada SDK. | Diferencias de formato por modelo pueden romper el loop. | Suite de fixtures por provider: texto, tool calls, JSON invalido, stop reasons y usage. |
-| P2 | Taxonomia de memoria | Clasificador usa reglas por defecto y LLM opcional; `categories` existe pero no esta plenamente administrado. | Categorias inconsistentes reducen recall y sintesis. | UI/CLI para editar categorias y reglas por proyecto. |
-| P2 | Sintesis de memoria | Escribe summaries, pero no reemplaza/archiva fuentes ni maneja caducidad. | Crecimiento indefinido y duplicacion de memoria. | Politica explicita: archive, supersede, decay, pin y lineage. |
-| P2 | Adapters | Exportan formatos, pero no todos tienen round-trip/import. | El canon puede divergir de herramientas externas. | Agregar import/sync y detectar conflictos. |
-| P2 | Documentacion operativa | Hay docs por tema, pero falta runbook de produccion. | Setup remoto/MCP HTTP/Atlas puede ser fragil. | Runbook: install, init-db, allowlist Atlas, MCP HTTP con token, backup/restore. |
+| P0 | Contract tests | `package.json` has `node --test`, but no significant suite yet. | Schema/provider/MCP changes can break compatibility silently. | Add tests with fakes for `Provider`, `ToolRegistry`, `MemoryStore`, MCP tools and a CLI smoke test. |
+| P0 | Evaluation | `EvalRunner` defines the contract, but benchmarks and verification are TODO. | The thesis cannot rigorously measure harness vs. bare-model delta. | Implement at least one small local benchmark first; then SWE-bench / Terminal-Bench / Aider. |
+| P0 | Tool safety | `read_file`, `write_file` and `shell` rely on gates and do not resolve workspace/canon paths themselves. | Risk of writes outside the workspace or dangerous commands if a gate is missing. | Wrap tools with an allowed root, path normalization, deny/allow lists and mandatory auditing. |
+| P0 | Secrets in logs/config | There is basic redaction and previews, but no central sensitive-data policy. | A prompt/tool result may persist secrets in `mcp_tool_calls` or context. | Create a central secret sanitizer applied to MCP, events, prompts and messages. |
+| P1 | Real streaming | `capabilities().streaming` exists, but the port only exposes `complete` and `chat`. | The TUI/live chat cannot cleanly show incremental tokens. | Extend the ProviderPort with `chatStream` or observable loop events. |
+| P1 | RepoMap | The parser degrades to empty when WASM grammars are missing. | `get_repomap` can return little signal without failing clearly. | Bundle/resolve grammars, expose diagnostics and test against a real TS repo. |
+| P1 | LangGraph/checkpointing | `buildGraph` exists with optional deps, but the CLI uses `runAgent`. | Resumability/replay stays more conceptual than operational. | Add a `run --graph` mode, tests and resume/replay docs. |
+| P1 | Production UI | `aitl ui` uses the API + a Vite dev server. | A global install depends on devDeps and is not a closed distribution. | Static build of `web/`, serve assets from Node on a single port. |
+| P1 | Observability | Events and MCP tool calls are stored, but there is no run dashboard/metrics beyond the Runs tab. | Hard to debug quality, cost, latency and recurring failures. | Extend the runs/events view with latency, tokens and errors per tool/provider. |
+| P1 | Schema migrations | Indexes are created idempotently, but there is no schema version/migrations. | Collection evolution may break existing data. | Introduce `schema_migrations` and per-collection versioning. |
+| P2 | Memory taxonomy | The classifier uses default rules and an optional LLM; `categories` exists but is not fully managed. | Inconsistent categories reduce recall and synthesis quality. | UI/CLI to edit per-project categories and rules. |
+| P2 | Memory synthesis | Writes summaries, but does not replace/archive sources or handle expiry. | Unbounded growth and duplication of memory. | Explicit policy: archive, supersede, decay, pin and lineage. |
+| P2 | Adapters | Export formats, but not all have round-trip/import. | The canon can diverge from external tools. | Add import/sync and conflict detection. |
+| P2 | Operational docs | There are per-topic docs, but no production runbook. | Remote/MCP-HTTP/Atlas setup can be fragile. | Runbook: install, init-db, Atlas allow-list, MCP HTTP with token, backup/restore. |
 
-## Riesgos de diseno
+## Design risks
 
-1. **Best-effort silencioso**: hidratacion, routing de skills, embeddings y resumen pueden fallar sin romper el run. Esto protege la ejecucion, pero puede esconder perdida de contexto. Conviene registrar errores con causa y exponerlos en UI/CLI.
-2. **Mongo como acoplamiento fuerte**: la persistencia comun es una ventaja, pero los stores aun mezclan dominio y detalles de coleccion. Para pruebas y migraciones conviene definir puertos mas estrictos o repositorios con contratos.
-3. **Capacidades declaradas antes de estar completas**: providers reportan `streaming: true`, pero no hay API de streaming en el puerto. Mejor declarar solo lo consumible o terminar la API.
-4. **MCP crece como superficie principal**: el servidor MCP ya concentra muchas herramientas. Si sigue creciendo, conviene separar registro por dominios (`memoryTools`, `promptTools`, `projectCtxTools`) y versionar tools.
-5. **Eval pendiente**: sin benchmarks reales, el proyecto puede demostrar arquitectura pero no impacto cuantitativo.
+1. **Silent best-effort**: hydration, skill routing, embeddings and summarization can fail
+   without breaking the run. This protects execution but can hide context loss. Errors
+   should be recorded with cause and surfaced in the UI/CLI.
+2. **Mongo as strong coupling**: the shared persistence is an advantage, but the stores
+   still mix domain and collection detail. For tests and migrations, define stricter ports
+   or repositories with contracts.
+3. **Capabilities declared before they are complete**: providers report `streaming: true`,
+   but there is no streaming API in the port. Better to declare only what is consumable, or
+   finish the API.
+4. **MCP grows as the main surface**: the MCP server already concentrates many tools. If it
+   keeps growing, split registration by domain (`memoryTools`, `promptTools`,
+   `projectCtxTools`) and version the tools.
+5. **Evaluation pending**: without real benchmarks, the project can demonstrate architecture
+   but not quantitative impact.
 
-## Roadmap sugerido
+## Suggested roadmap
 
 ```mermaid
 flowchart LR
-  A["P0: Contratos y seguridad\n- tests fakes\n- tool sandbox\n- secret sanitizer"] --> B["P0: Eval minimo\nbenchmark local reproducible"]
-  B --> C["P1: RepoMap confiable\nWASM grammars + diagnostics"]
+  A["P0: Contracts and safety\n- test fakes\n- tool sandbox\n- secret sanitizer"] --> B["P0: Minimal eval\nreproducible local benchmark"]
+  B --> C["P1: Reliable RepoMap\nWASM grammars + diagnostics"]
   C --> D["P1: Streaming + observer\nProviderPort stream + TUI events"]
-  D --> E["P1: UI empaquetada\nsingle-port static build"]
-  E --> F["P2: Memoria avanzada\nschema migrations, taxonomy UI,\narchive/supersede"]
+  D --> E["P1: Packaged UI\nsingle-port static build"]
+  E --> F["P2: Advanced memory\nschema migrations, taxonomy UI,\narchive/supersede"]
 ```
 
-## Recomendacion pragmatica
+## Pragmatic recommendation
 
-El siguiente bloque de trabajo deberia enfocarse en **hacer medible y seguro lo que ya existe**, no en sumar mas features:
+The next block of work should focus on **making what already exists measurable and safe**,
+not on adding more features:
 
-1. Crear suite de tests de contrato para schemas, providers fake, ToolRegistry, MemoryStore fake/integration y MCP startup.
-2. Endurecer tools de filesystem/shell con workspace root obligatorio y sanitizacion de secretos centralizada.
-3. Implementar un benchmark local pequeno que compare `runAgent` contra un baseline de `provider.complete`.
-4. Hacer que `get_repomap` falle o avise claramente cuando no hay grammars, y agregar al menos una grammar TS/JS funcional.
-5. Empaquetar la UI para que `aitl ui` funcione sin Vite en produccion.
+1. Build a contract-test suite for models/schemas, a fake Provider, ToolRegistry, a
+   fake/integration MemoryStore and MCP startup.
+2. Harden the filesystem/shell tools with a mandatory workspace root and centralized secret
+   sanitization.
+3. Implement a small local benchmark comparing `runAgent` against a `provider.complete`
+   baseline.
+4. Make `get_repomap` fail or warn clearly when there are no grammars, and add at least one
+   working TS/JS grammar.
+5. Package the UI so `aitl ui` works without Vite in production.
 
-Con eso, `aitl-js` pasaria de "arquitectura prometedora" a "harness verificable": mas facil de operar, mas seguro para usar con agentes y mas defendible para la tesis.
+With that, `aitl-js` would move from "promising architecture" to "verifiable harness":
+easier to operate, safer to use with agents, and more defensible for the thesis.

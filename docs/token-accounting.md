@@ -1,106 +1,105 @@
-# Contabilidad de tokens en el harness (cómo se cuentan los Runs)
+# Token accounting in the harness (how Runs are counted)
 
-> Por qué la pestaña **Runs** muestra ~42.6M tokens mientras `/context` de Claude Code
-> muestra ~250k. **No es una contradicción: miden cosas distintas.**
+> Why the **Runs** tab shows ~42.6M tokens while Claude Code's `/context` shows ~250k.
+> **This is not a contradiction: they measure different things.**
 
 ## TL;DR
 
-| Medida | Qué es | Valor (run `d4227793`) |
+| Measure | What it is | Value (run `d4227793`) |
 |---|---|---|
-| `/context` (Claude Code) | **Tamaño actual** de la ventana de contexto — una foto instantánea | ~250.3k / 1M (25%) |
-| Runs → `tokens total` | **Suma acumulada** facturada en TODAS las llamadas a la API de la sesión | 42,664,539 |
+| `/context` (Claude Code) | The **current size** of the context window — a snapshot | ~250.3k / 1M (25%) |
+| Runs → `tokens total` | The **cumulative sum** billed across ALL API calls of the session | 42,664,539 |
 
-`/context` responde *"¿qué tan llena está la ventana ahora?"*.
-Runs responde *"¿cuántos tokens se procesaron/facturaron sumando los 272 turnos?"*.
+`/context` answers *"how full is the window right now?"*.
+Runs answers *"how many tokens were processed/billed summing all 272 turns?"*.
 
-Son dos preguntas diferentes. Una es un **stock** (instantáneo); la otra es un **flujo
-acumulado** (integral sobre el tiempo).
+These are two different questions. One is a **stock** (instantaneous); the other is a
+**cumulative flow** (an integral over time).
 
-## Por qué el número de Runs es tan grande
+## Why the Runs number is so large
 
-Un agente como Claude Code corre un **loop**: en cada turno re-envía **casi todo el
-contexto** a la API. Con prompt caching, ese contexto repetido se factura como
-`cache_read` (≈0.1× del precio del input fresco), pero **se cuenta como tokens** en cada
-turno.
+An agent like Claude Code runs a **loop**: on each turn it re-sends **almost the entire
+context** to the API. With prompt caching, that repeated context is billed as `cache_read`
+(≈0.1× the price of fresh input), but it **still counts as tokens** on every turn.
 
-El harness, en `parseTranscript` (`src/context/capture.ts`), suma el `usage` de **cada
-turno asistente** del transcript:
+The harness, in `parseTranscript` (`src/context/capture.ts`), sums the `usage` of **each
+assistant turn** in the transcript:
 
 ```
-token_usage.input = Σ_turnos ( input_tokens + cache_creation_input_tokens + cache_read_input_tokens )
-token_usage.output = Σ_turnos ( output_tokens )
+token_usage.input = Σ_turns ( input_tokens + cache_creation_input_tokens + cache_read_input_tokens )
+token_usage.output = Σ_turns ( output_tokens )
 ```
 
-Con 272 turnos y una ventana que crece hasta ~150–250k, re-leer el contexto cada turno
-acumula decenas de millones de `cache_read`.
+With 272 turns and a window that grows to ~150–250k, re-reading the context each turn
+accumulates tens of millions of `cache_read`.
 
-## Desglose real de este run (272 turnos)
+## Real breakdown of this run (272 turns)
 
-| Componente | Tokens | % del input | Qué significa |
+| Component | Tokens | % of input | Meaning |
 |---|---:|---:|---|
-| **cache_read** | 41,367,842 | 97.7% | Contexto **re-leído** de caché cada turno (barato, ~0.1×) |
-| cache_creation | 963,253 | 2.3% | Contexto **escrito** a caché una vez (~1.25×) |
-| fresh input | 24,779 | 0.06% | Input nunca antes visto (tu prompt nuevo por turno) |
-| **input total** | **42,355,874** | 100% | Suma de los tres de arriba |
-| **output** | **308,665** | — | Tokens **generados** por el modelo (sin doble conteo) |
+| **cache_read** | 41,367,842 | 97.7% | Context **re-read** from cache each turn (cheap, ~0.1×) |
+| cache_creation | 963,253 | 2.3% | Context **written** to cache once (~1.25×) |
+| fresh input | 24,779 | 0.06% | Input never seen before (your new prompt per turn) |
+| **total input** | **42,355,874** | 100% | Sum of the three above |
+| **output** | **308,665** | — | Tokens **generated** by the model (no double counting) |
 | **total** | **42,664,539** | — | input + output |
 
-`cache_read` es el **97.7%** del total. Por eso 42.6M ≠ "se gastaron 42.6M tokens únicos".
+`cache_read` is **97.7%** of the total. That is why 42.6M ≠ "42.6M unique tokens were
+spent".
 
-## Qué número usar para qué
+## Which number to use for what
 
-Dependiendo de lo que quieras reportar:
+Depending on what you want to report:
 
-1. **Trabajo real generado** → `output` = **308,665**. Sólido, sin re-conteo.
-2. **Contenido único ingerido** (lo que el modelo leyó *alguna vez*, sin re-lecturas) →
+1. **Real generated work** → `output` = **308,665**. Solid, no re-counting.
+2. **Unique content ingested** (what the model read *at least once*, without re-reads) →
    `fresh input + cache_creation` ≈ **988k**.
-3. **Costo facturado** → hay que **ponderar** por los multiplicadores de caché de Anthropic:
+3. **Billed cost** → you must **weight** by Anthropic's cache multipliers:
 
    ```
-   input-equivalente = fresh×1.0 + cache_creation×1.25 + cache_read×0.1
-                     = 24,779 + 1,204,066 + 4,136,784
-                     ≈ 5,365,629 tokens-equivalentes de input
+   input-equivalent = fresh×1.0 + cache_creation×1.25 + cache_read×0.1
+                    = 24,779 + 1,204,066 + 4,136,784
+                    ≈ 5,365,629 input-equivalent tokens
    ```
 
-   Más el `output` a su tarifa (para Opus, ~5× el input). Es decir, el **costo real**
-   equivale a ~5.4M de input + ~309k de output, **no** a 42.6M.
-4. **Throughput acumulado** (tokens procesados sumando turnos, métrica de eficiencia del
-   loop) → los **42.6M**. Útil para comparar C0 vs C2: un loop que itera más, re-procesa
-   más contexto.
+   Plus `output` at its rate (for Opus, ~5× the input). In other words, the **real cost** is
+   equivalent to ~5.4M input + ~309k output, **not** 42.6M.
+4. **Cumulative throughput** (tokens processed summing turns — a loop-efficiency metric) →
+   the **42.6M**. Useful to compare C0 vs. C2: a loop that iterates more re-processes more
+   context.
 
-## Relación entre `/context` y Runs
+## Relationship between `/context` and Runs
 
-- `/context` ≈ el tamaño del input de **un** turno (el actual, el más grande).
-- Runs `input` ≈ **Σ** del input de **todos** los turnos.
-- Como cada turno re-lee ~150k, y hubo 272 turnos:
-  `41.4M cache_read / 272 ≈ 152k por turno`, que coincide con el tamaño de la ventana.
+- `/context` ≈ the input size of **one** turn (the current, largest one).
+- Runs `input` ≈ the **Σ** of the input of **all** turns.
+- Since each turn re-reads ~150k, and there were 272 turns:
+  `41.4M cache_read / 272 ≈ 152k per turn`, which matches the window size.
 
-En otras palabras: **Runs ≈ /context × número de turnos** (a grandes rasgos, porque la
-ventana crece). El 25% de `/context` es el estado final; los 42.6M son la integral.
+In other words: **Runs ≈ /context × number of turns** (roughly, because the window grows).
+The 25% in `/context` is the final state; the 42.6M is the integral.
 
-## Cómo lo muestra la UI
+## How the UI shows it
 
-La pestaña **Runs** muestra el `total` (42.6M) como titular **y** el desglose de caché
-(`creation`/`read`/`fresh`) debajo, precisamente para que el total no engañe:
-`host_meta.cache = { creation, read }` y `raw_input_tokens` (fresh) quedan persistidos en
-el doc del run. `aitl run-show <runId>` expone lo mismo.
+The **Runs** tab shows the `total` (42.6M) as the headline **and** the cache breakdown
+(`creation`/`read`/`fresh`) underneath, precisely so the total does not mislead:
+`host_meta.cache = { creation, read }` and `raw_input_tokens` (fresh) are persisted on the
+run doc. `aitl run-show <runId>` exposes the same.
 
-## Recomendación para la tesis (métrica #7, eficiencia)
+## Recommendation for the thesis (metric #7, efficiency)
 
-Para que la métrica sea defendible y no inflada por re-lecturas de caché, reporta de forma
-separada:
+For the metric to be defensible and not inflated by cache re-reads, report separately:
 
-- **output_tokens** (generación) — el indicador más limpio de "esfuerzo del modelo".
-- **unique input** (`fresh + cache_creation`) — contexto realmente cargado.
-- **costo ponderado** (fórmula de arriba) — para comparaciones económicas.
-- **throughput acumulado** (total) — sólo si la hipótesis es sobre el *trabajo del loop*
-  (p. ej. C0 vs C2: más iteraciones ⇒ más re-procesamiento).
+- **output_tokens** (generation) — the cleanest indicator of "model effort".
+- **unique input** (`fresh + cache_creation`) — the context actually loaded.
+- **weighted cost** (the formula above) — for economic comparisons.
+- **cumulative throughput** (total) — only if the hypothesis is about the *loop's work*
+  (e.g. C0 vs. C2: more iterations ⇒ more re-processing).
 
-Comparar el `total` crudo entre condiciones sigue siendo válido **si** ambas se miden
-igual (mismo modelo, mismo prompt caching), porque el sesgo de `cache_read` es sistemático.
+Comparing the raw `total` across conditions is still valid **if** both are measured the same
+way (same model, same prompt caching), because the `cache_read` bias is systematic.
 
 ---
 
-*Fuente de los datos: colección `runs` (ADR-0034 para `run-host`; ADR-0034/0035 para
-sesiones capturadas con `aitl capture-session`). El desglose se extrae del `usage` por
-turno del transcript JSONL de Claude Code.*
+*Data source: the `runs` collection (ADR-0034 for `run-host`; ADR-0034/0035 for sessions
+captured with `aitl capture-session`). The breakdown is extracted from the per-turn `usage`
+of Claude Code's JSONL transcript.*

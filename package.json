@@ -5,6 +5,26 @@
   "type": "module",
   "license": "MIT",
   "author": "Everardo",
+  "keywords": [
+    "agent",
+    "mcp",
+    "model-context-protocol",
+    "mongodb",
+    "mongoose",
+    "vector-search",
+    "memory",
+    "llm",
+    "cli",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eversuelo/aitl-mcp.git"
+  },
+  "homepage": "https://github.com/eversuelo/aitl-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/eversuelo/aitl-mcp/issues"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -15,8 +35,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "build:watch": "tsc -p tsconfig.json --watch",
+    "build": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepare": "npm run build",
     "start": "node dist/src/cli.js",
@@ -46,7 +66,8 @@
     "user:bootstrap": "tsx src/cli.ts user bootstrap",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
-    "verify": "npm run typecheck && npm test"
+    "verify": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run verify"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",

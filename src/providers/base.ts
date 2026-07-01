@@ -66,7 +66,7 @@ export async function getProvider(which?: string): Promise<Provider> {
       model: settings.openrouterModel,
       baseURL: "https://openrouter.ai/api/v1",
       defaultHeaders: {
-        "HTTP-Referer": "https://github.com/eversuelo/AITL-Harness-JS",
+        "HTTP-Referer": "https://github.com/eversuelo/aitl-mcp",
         "X-Title": "AITL-Harness",
       },
     });

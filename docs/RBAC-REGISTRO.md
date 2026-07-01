@@ -1,43 +1,42 @@
-# RBAC y registro de usuarios
+# RBAC and user registration
 
-## Objetivo
+## Goal
 
-AITL debe funcionar como gateway seguro entre usuarios/agentes y MongoDB. Ningun cliente
-web, agente remoto o usuario no-root debe conocer ni usar directamente `MONGODB_URI`.
+AITL is meant to act as a secure gateway between users/agents and MongoDB. No web client,
+remote agent or non-root user should ever know or use `MONGODB_URI` directly.
 
-La cadena de MongoDB vive solo en el host donde corre AITL:
+The MongoDB connection string lives only on the host where AITL runs:
 
 ```text
-AITL Web / cliente MCP / host agent
+AITL Web / MCP client / host agent
   -> AITL Server
     -> MongoDB Atlas
 ```
 
-## Principios
+## Principles
 
-- Solo el usuario `root` puede registrar usuarios nuevos.
-- El registro inicial se ejecuta durante `check-db` o bootstrap equivalente, no desde una
-  pantalla publica.
-- Los usuarios normales no administran memoria, decisiones, agentes, skills, indices ni
-  configuracion global.
-- Los usuarios normales solo pueden eliminar sus propios prompts.
-- Las operaciones privilegiadas las ejecutan `aitl web` y `aitl server` a traves de un
-  host agent autenticado/autorizado.
-- Todo evento sensible debe registrar actor, rol, origen, accion, recurso y resultado.
+- Only the `root` user can register new users.
+- Initial registration runs during `check-db` (or an equivalent bootstrap), never from a
+  public screen.
+- Regular users do not manage memory, decisions, agents, skills, indexes or global config.
+- Regular users may only delete their own prompts.
+- Privileged operations are performed by `aitl web` and `aitl server` through an
+  authenticated/authorized host agent.
+- Every sensitive event must record the actor, role, source, action, resource and result.
 
 ## Roles
 
-| Rol | Proposito |
+| Role | Purpose |
 |---|---|
-| `root` | Dueño del sistema. Puede registrar usuarios, rotar credenciales, inicializar DB y administrar RBAC. |
-| `admin` | Opera AITL Web/Server, pero no crea usuarios root ni rota secretos base. |
-| `user` | Usa UI y prompts propios. Solo puede borrar sus propios prompts. |
-| `agent` | Identidad de servicio para AITL Server/host agent. Ejecuta operaciones internas autorizadas. |
-| `auditor` | Solo lectura de bitacoras y eventos, sin mutaciones. |
+| `root` | System owner. Can register users, rotate credentials, initialize the DB and manage RBAC. |
+| `admin` | Operates AITL Web/Server, but cannot create root users or rotate base secrets. |
+| `user` | Uses the UI and their own prompts. Can only delete their own prompts. |
+| `agent` | Service identity for AITL Server / host agent. Runs authorized internal operations. |
+| `auditor` | Read-only access to logs and events, with no mutations. |
 
-## Registro inicial
+## Initial registration
 
-El bootstrap lee estas variables:
+The bootstrap reads these variables:
 
 ```env
 AITL_BOOTSTRAP_USERNAME=
@@ -46,31 +45,31 @@ AITL_BOOTSTRAP_PASSWORD=
 AITL_BOOTSTRAP_ROLE=root
 ```
 
-Reglas:
+Rules:
 
-1. Si no existe ningun usuario en `users`, `check-db` puede crear el primer usuario solo si
+1. If no user exists in `users`, `check-db` may create the first user only if
    `AITL_BOOTSTRAP_ROLE=root`.
-2. Si ya existe al menos un usuario, `check-db` no registra mas usuarios.
-3. Si ya existe un `root`, todo registro posterior requiere una sesion autenticada como
-   `root`.
-4. `username`, `email` y `password` son obligatorios.
-5. La contraseña nunca se guarda en texto plano; se guarda hash con salt.
-6. `username` y `email` son unicos.
+2. If at least one user already exists, `check-db` does not register more users.
+3. If a `root` already exists, any later registration requires an authenticated `root`
+   session.
+4. `username`, `email` and `password` are required.
+5. The password is never stored in plain text; it is stored hashed with a salt.
+6. `username` and `email` are unique.
 
-## Flujo de `check-db`
+## `check-db` flow
 
-`aitl check-db` debe validar en este orden:
+`aitl check-db` validates, in this order:
 
-1. Conexion a MongoDB.
-2. Existencia de coleccion `users`.
-3. Indices unicos:
+1. Connection to MongoDB.
+2. Existence of the `users` collection.
+3. Unique indexes:
    - `users.username`
    - `users.email`
-4. Existencia de usuario `root`.
-5. Si no hay usuarios y hay bootstrap completo, crear usuario `root`.
-6. Si falta root, devolver advertencia accionable.
+4. Existence of a `root` user.
+5. If there are no users and a complete bootstrap is present, create the `root` user.
+6. If root is missing, return an actionable warning.
 
-Salida esperada:
+Expected output:
 
 ```text
 MongoDB ping OK via primary: <redacted-uri> (db=aitl)
@@ -79,7 +78,7 @@ Root user: exists
 RBAC status: ready
 ```
 
-Si no existe root:
+If root does not exist:
 
 ```text
 RBAC status: missing-root
@@ -87,56 +86,56 @@ Set AITL_BOOTSTRAP_USERNAME, AITL_BOOTSTRAP_EMAIL, AITL_BOOTSTRAP_PASSWORD,
 AITL_BOOTSTRAP_ROLE=root and run aitl check-db again.
 ```
 
-## Permisos
+## Permissions
 
-| Recurso | Accion | `root` | `admin` | `user` | `agent` | `auditor` |
+| Resource | Action | `root` | `admin` | `user` | `agent` | `auditor` |
 |---|---:|---:|---:|---:|---:|---:|
-| usuarios | crear | si | no | no | no | no |
-| usuarios | leer | si | si | propio | no | si |
-| usuarios | cambiar rol | si | no | no | no | no |
-| usuarios | desactivar | si | no | no | no | no |
-| prompts | crear | si | si | propio | si | no |
-| prompts | leer | si | si | propio | si | si |
-| prompts | eliminar | si | si | propio | si | no |
-| memory | crear/editar/eliminar | si | via AITL Server | no | si | no |
-| decisions | crear/editar/eliminar | si | via AITL Server | no | si | no |
-| agents/skills | crear/editar/eliminar | si | via AITL Server | no | si | no |
-| config/secrets | leer/escribir | si | no | no | no | no |
-| indexes/init-db | ejecutar | si | no | no | no | no |
+| users | create | yes | no | no | no | no |
+| users | read | yes | yes | own | no | yes |
+| users | change role | yes | no | no | no | no |
+| users | disable | yes | no | no | no | no |
+| prompts | create | yes | yes | own | yes | no |
+| prompts | read | yes | yes | own | yes | yes |
+| prompts | delete | yes | yes | own | yes | no |
+| memory | create/edit/delete | yes | via AITL Server | no | yes | no |
+| decisions | create/edit/delete | yes | via AITL Server | no | yes | no |
+| agents/skills | create/edit/delete | yes | via AITL Server | no | yes | no |
+| config/secrets | read/write | yes | no | no | no | no |
+| indexes/init-db | run | yes | no | no | no | no |
 
-## Politica para usuarios normales
+## Policy for regular users
 
-Un usuario `user` puede:
+A `user` can:
 
-- iniciar sesion;
-- ver sus prompts;
-- crear prompts propios;
-- eliminar prompts propios;
-- solicitar acciones al host agent por medio de AITL Web.
+- log in;
+- view their prompts;
+- create their own prompts;
+- delete their own prompts;
+- request actions from the host agent via AITL Web.
 
-Un usuario `user` no puede:
+A `user` cannot:
 
-- escribir memoria durable directamente;
-- registrar decisiones directamente;
-- crear agentes o skills;
-- ejecutar `init-db`;
-- ejecutar registro de usuarios;
-- ver o exportar secretos;
-- borrar prompts de otros usuarios.
+- write durable memory directly;
+- record decisions directly;
+- create agents or skills;
+- run `init-db`;
+- run user registration;
+- read or export secrets;
+- delete other users' prompts.
 
-## Politica para AITL Web y AITL Server
+## Policy for AITL Web and AITL Server
 
-AITL Web no debe ejecutar mutaciones privilegiadas directamente como el usuario final.
-Debe enviar solicitudes al AITL Server con actor autenticado.
+AITL Web must not run privileged mutations directly as the end user. It must send requests
+to AITL Server with an authenticated actor.
 
-AITL Server decide si:
+AITL Server decides whether to:
 
-- responde directamente;
-- rechaza por RBAC;
-- delega a un host agent con identidad `agent`;
-- registra una decision o memoria como resultado de una accion autorizada.
+- respond directly;
+- reject on RBAC grounds;
+- delegate to a host agent with the `agent` identity;
+- record a decision or memory as the result of an authorized action.
 
-El host agent debe operar con una identidad de servicio, por ejemplo:
+The host agent must operate with a service identity, for example:
 
 ```json
 {
@@ -148,7 +147,7 @@ El host agent debe operar con una identidad de servicio, por ejemplo:
 }
 ```
 
-## Modelo minimo de usuario
+## Minimal user model
 
 ```ts
 type User = {
@@ -164,7 +163,7 @@ type User = {
 };
 ```
 
-## Modelo minimo de auditoria
+## Minimal audit model
 
 ```ts
 type AuditEvent = {
@@ -180,64 +179,53 @@ type AuditEvent = {
 };
 ```
 
-## Endpoints sugeridos
+## Suggested endpoints
 
-| Endpoint | Rol minimo | Descripcion |
+| Endpoint | Minimum role | Description |
 |---|---|---|
-| `POST /api/auth/login` | publico | Inicia sesion. |
-| `POST /api/auth/logout` | autenticado | Cierra sesion. |
-| `GET /api/auth/me` | autenticado | Devuelve actor actual. |
-| `POST /api/users` | `root` | Registra usuario. |
-| `GET /api/users` | `root`/`admin` | Lista usuarios sin hashes. |
-| `PATCH /api/users/:username/role` | `root` | Cambia rol. |
-| `DELETE /api/prompts/:id` | owner/`admin`/`root` | Borra prompt si es propio o privilegiado. |
+| `POST /api/auth/login` | public | Log in. |
+| `POST /api/auth/logout` | authenticated | Log out. |
+| `GET /api/auth/me` | authenticated | Return the current actor. |
+| `POST /api/users` | `root` | Register a user. |
+| `GET /api/users` | `root`/`admin` | List users without hashes. |
+| `PATCH /api/users/:username/role` | `root` | Change a role. |
+| `DELETE /api/prompts/:id` | owner/`admin`/`root` | Delete a prompt if owned or privileged. |
 
-## Tareas de implementacion
+## Implementation status
 
-1. Cambiar bootstrap default a `root` cuando el objetivo sea primer registro.
-2. Extender `aitl check-db` para verificar `users`, indices y root.
-3. Agregar `owner_user` / `actor_id` a prompts.
-4. Aplicar RBAC en API web antes de cada mutacion.
-5. Aplicar RBAC en MCP HTTP con token mapeado a actor.
-6. Agregar audit log para acciones rechazadas y aceptadas.
-7. Evitar que el cliente web reciba `MONGODB_URI`, tokens o hashes.
-8. Agregar pruebas de permisos para:
-   - root registra usuario;
-   - user no registra usuario;
-   - user elimina prompt propio;
-   - user no elimina prompt ajeno;
-   - agent escribe memoria por flujo server autorizado.
-
-## Estado de implementacion
-
-| # | Tarea | Estado | Donde |
+| # | Task | Status | Where |
 |---|---|---|---|
-| 1 | Bootstrap default a `root` | hecho | `config.ts` (`bootstrapRole=root`), `auth/users.ts` (`bootstrapBaseUser` solo crea el primer usuario y exige rol root) |
-| 2 | `check-db` valida users, indices y root | hecho | `auth/checkdb.ts` (`checkRbac`), comando `aitl check-db` en `cli.ts` |
-| 3 | `owner_user` / `actor_id` en prompts | hecho | `prompts/schemas.ts`, `prompts/store.ts` (`getById`/`deleteById`) |
-| 4 | RBAC en API web antes de cada mutacion | hecho | `server/api.ts` (`resolveActor` + `guard`); memoria, prompts y usuarios |
-| 5 | RBAC en MCP HTTP con token mapeado a actor | hecho | `mcpserver/server.ts` (`mcpActor` + `guardTool` en `runLogged`, mapa `TOOL_RBAC`) |
-| 6 | Audit log de acciones aceptadas y rechazadas | hecho | `auth/audit.ts` (`recordAudit`, coleccion `audit`); usado en web, MCP y CLI |
-| 7 | El cliente web no recibe `MONGODB_URI`, tokens ni hashes | hecho | `config/store.ts` enmascara secretos; `/api/config` exige rol root; `PUBLIC_USER_PROJECTION` excluye hashes |
-| 8 | Pruebas de permisos | hecho | `auth/rbac.test.ts`, `auth/users.test.ts` (`npm test`) |
+| 1 | Bootstrap defaults to `root` | done | `config.ts` (`bootstrapRole=root`), `auth/users.ts` (`bootstrapBaseUser` creates only the first user and requires the root role). |
+| 2 | `check-db` validates users, indexes and root | done | `auth/checkdb.ts` (`checkRbac`), `aitl check-db` in `cli.ts`. |
+| 3 | `owner_user` / `actor_id` on prompts | done | `prompts/store.ts` (`getById`/`deleteById`). |
+| 4 | RBAC in the web API before every mutation | done | `server/api.ts` (`resolveActor` + `guard`); memory, prompts and users. |
+| 5 | RBAC on MCP HTTP with a token mapped to an actor | done | `mcpserver/server.ts` (`mcpActor` + `guardTool` in `runLogged`, the `TOOL_RBAC` map). |
+| 6 | Audit log of accepted and rejected actions | done | `auth/audit.ts` (`recordAudit`, the `audit` collection); used in web, MCP and CLI. |
+| 7 | The web client never receives `MONGODB_URI`, tokens or hashes | done | `config/store.ts` masks secrets; `/api/config` requires the root role; `PUBLIC_USER_PROJECTION` excludes hashes. |
+| 8 | Permission tests | done | `auth/rbac.test.ts`, `auth/users.test.ts` (`npm test`). |
 
-### Matriz como codigo
+> Note on the data layer: user documents are now defined by the Mongoose model in
+> `src/models/user.model.ts` (ADR-0036), which is the single source of shape and types.
+> The unique `username`/`email` indexes remain in `src/db/indexes.ts` (created by
+> `aitl init-db`), not in the model, to keep index management in one place.
 
-La tabla de **Permisos** vive en `src/auth/rbac.ts` (`MATRIX` + `can()`), que es la
-fuente unica que consultan la API web, el MCP y la CLI. Cualquier cambio de politica
-se hace ahi y queda cubierto por `rbac.test.ts`.
+### Matrix as code
 
-### Identidades de actor por gateway
+The **Permissions** table lives in `src/auth/rbac.ts` (`MATRIX` + `can()`), the single
+source consulted by the web API, the MCP server and the CLI. Any policy change is made
+there and is covered by `rbac.test.ts`.
 
-- **CLI**: el operador del host actua como `root` (`cli:local`).
-- **API web**: bearer token -> actor via `AITL_WEB_TOKENS`; sin token valido el llamador
-  es un `user` anonimo (minimo privilegio), de modo que las rutas privilegiadas devuelven 403.
-- **MCP**: identidad de servicio `agent` por defecto (`AITL_MCP_ACTOR_ID/ROLE`); las tools
-  de escritura durable se autorizan como delegacion del servidor.
+### Actor identities per gateway
 
-### Pendiente (fuera de este cambio)
+- **CLI**: the host operator acts as `root` (`cli:local`).
+- **Web API**: a bearer token maps to an actor via `AITL_WEB_TOKENS`; without a valid token
+  the caller is an anonymous `user` (least privilege), so privileged routes return 403.
+- **MCP**: a service `agent` identity by default (`AITL_MCP_ACTOR_ID`/`_ROLE`); durable
+  write tools are authorized as a server delegation.
 
-- Sesiones/login con cookie (`POST /api/auth/login`, `/logout`): hoy la identidad web se
-  resuelve por bearer token; falta el flujo de sesion completo con contraseña.
-- Propagar `owner_user` al crear prompts desde web/MCP para habilitar borrado por el
-  dueño (el esquema y el guard de borrado ya lo soportan).
+### Pending (out of scope of this change)
+
+- Session/cookie login (`POST /api/auth/login`, `/logout`): today web identity is resolved
+  by bearer token; the full password session flow is missing.
+- Propagate `owner_user` when prompts are created from web/MCP to enable owner-scoped
+  deletion (the schema and the delete guard already support it).

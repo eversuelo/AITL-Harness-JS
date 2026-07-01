@@ -1,3 +1,15 @@
+# Architecture (conceptual overview)
+
+> **Note (English).** This document is the **conceptual, Python-origin architecture
+> overview** and predates the current TypeScript data-layer migration. For the up-to-date,
+> **canonical TypeScript architecture** — hexagonal ports, the Mongoose data layer
+> (`src/models/*.model.ts`), the MCP surface, the CLI and the engineering roles — read
+> [ARQUITECTURA-AITL-JS.md](ARQUITECTURA-AITL-JS.md). The sections below remain useful for
+> the design intent and the file-level references, but where they mention Zod document
+> schemas or the raw MongoDB driver, treat Mongoose as the source of truth (ADR-0036).
+
+---
+
 # Arquitectura de AITL-Harness-JS
 
 > **Qué es.** Un *harness* de agentes **model-agnostic**: orquesta el loop de un agente

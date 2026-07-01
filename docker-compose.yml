@@ -1,0 +1,34 @@
+# Local MongoDB for AITL — MUST include Atlas Search + Vector Search.
+#
+# The harness stores embeddings and queries them with `$vectorSearch` (see
+# docs/adr/0002-mongodb-atlas-vector-search.md). A plain `mongod` has NO Vector Search
+# and will fail on `createSearchIndex` / `$vectorSearch`, so we use the official
+# `mongodb-atlas-local` image, which bundles the same Search engine as cloud Atlas and
+# exposes the identical `$vectorSearch` API — reproducible locally and in the cloud.
+#
+# Quick start:
+#   docker compose up -d
+#   aitl config set MONGODB_URI "mongodb://localhost:27017/?directConnection=true"
+#   aitl config set MONGODB_DB aitl
+#   aitl init-db          # creates collections, indexes, and the vector_index
+#   aitl check-db         # should print "RBAC status: ready"
+#
+# For production use a real MongoDB Atlas cluster (with a Vector Search index) instead.
+
+services:
+  mongodb:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: aitl-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - aitl-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  aitl-mongo-data:

@@ -1,56 +1,66 @@
-# Documentacion
+# Documentation
 
-Indice de lectura para explorar AITL-Harness-JS en GitHub.
+Reading index for exploring AITL-Harness-JS.
 
-## Lectura recomendada
+## Recommended reading order
 
-1. [../README.md](../README.md): instalacion, comandos y mapa general.
-2. [ARQUITECTURA-AITL-JS.md](ARQUITECTURA-AITL-JS.md): resumen con diagramas Mermaid, brechas y mejoras.
-3. [adr/README.md](adr/README.md): decisiones de arquitectura.
-4. [PARITY.md](PARITY.md): estado de paridad con el port Python.
-5. [MONGODB-ATLAS.md](MONGODB-ATLAS.md): setup de Mongo local/cloud.
-6. [GOOGLE-FREE.md](GOOGLE-FREE.md): provider `google-free` / `gemini-free`.
-7. [RBAC-REGISTRO.md](RBAC-REGISTRO.md): contrato de roles, registro root y permisos.
+1. [../README.md](../README.md) — install, commands and the overall map.
+2. [ARQUITECTURA-AITL-JS.md](ARQUITECTURA-AITL-JS.md) — the **canonical TypeScript
+   architecture** (hexagonal ports, MCP, CLI, roles, durable store).
+3. [MONGODB-ATLAS.md](MONGODB-ATLAS.md) — MongoDB / Atlas Vector Search setup (local and cloud).
+4. [RBAC-REGISTRO.md](RBAC-REGISTRO.md) — RBAC model, users, audit and root bootstrap.
+5. [adr/README.md](adr/README.md) — Architecture Decision Records.
 
 ## ADRs
 
-| ADR | Tema |
+The **ADR ledger lives in MongoDB** (the `decisions` collection), currently spanning
+**0001–0037**. Only a subset is exported as files under [adr/](adr/); the rest are
+retrievable through the durable store (`aitl adr history`, the `list_decisions` MCP tool,
+or the web UI). Exported files:
+
+| ADR | Topic |
 |---|---|
-| [0001](adr/0001-record-architecture-decisions.md) | Registro de decisiones en git y Mongo. |
-| [0002](adr/0002-mongodb-atlas-vector-search.md) | MongoDB Atlas Vector Search como store durable. |
-| [0003](adr/0003-interactive-tui-live-agent-chat.md) | TUI live agent chat. |
-| [0004](adr/0004-ink-as-tui-rendering-library.md) | Ink para render del TUI. |
-| [0005](adr/0005-streaming-in-provider-port.md) | Streaming en providers. |
-| [0006](adr/0006-user-level-config-profile.md) | Config global para `npm install -g`. |
-| [0007](adr/0007-memory-admin-web-ui.md) | UI web de administracion de memoria. |
-| [0008](adr/0008-interactive-control-panel.md) | Panel interactivo sin dependencias. |
+| [0001](adr/0001-record-architecture-decisions.md) | Record architecture decisions in git and Mongo. |
+| [0002](adr/0002-mongodb-atlas-vector-search.md) | MongoDB Atlas Vector Search as the durable store. |
+| [0003](adr/0003-interactive-tui-live-agent-chat.md) | Interactive TUI live agent chat. |
+| [0004](adr/0004-ink-as-tui-rendering-library.md) | Ink as the TUI rendering library. |
+| [0005](adr/0005-streaming-in-provider-port.md) | Streaming in the provider port. |
+| [0006](adr/0006-user-level-config-profile.md) | User-level config profile for global install. |
+| [0007](adr/0007-memory-admin-web-ui.md) | Memory-admin web UI. |
+| [0008](adr/0008-interactive-control-panel.md) | Interactive control panel. |
+| [0009](adr/0009-atlas-migration-via-driver.md) | Database migration to Atlas (`aitl migrate-atlas`). |
+| [0026](adr/0026-auto-bootstrap-local-root.md) | Auto-bootstrap a local root user. |
+| [0027](adr/0027-versioning-adrs-memory.md) | Append-only versioning of ADRs and memory. |
+| [0028](adr/0028-software-projects-repos-hierarchy.md) | Software → projects → repos hierarchy. |
+| [0029](adr/0029-knowledge-map-multi-entity.md) | Multi-entity knowledge map. |
+| [0030](adr/0030-builder-and-master-indexer-skills.md) | Definition-builder + master-indexer skills. |
+| [0031](adr/0031-branch-classification-graph.md) | Branch classification and branch graph. |
+| [0036](adr/0036-mongoose-data-layer.md) | Data layer migrated from the raw driver + Zod to Mongoose. |
+| [0037](adr/0037-branch-aware-repomap.md) | Branch-aware repo map with a constant storage footprint. |
 
-## Planes y tareas
+## Contracts and parity
 
-| Archivo | Proposito |
+| File | Purpose |
 |---|---|
-| [TUI-IMPLEMENTATION-PLAN.md](TUI-IMPLEMENTATION-PLAN.md) | Plan completo para el TUI live agent chat. |
-| [codex-task-A-streaming-provider.md](codex-task-A-streaming-provider.md) | Brief de streaming por provider. |
-| [codex-task-B-loop-observer.md](codex-task-B-loop-observer.md) | Brief de observador del loop. |
-| [sessions/README.md](sessions/README.md) | Bitacoras de sesiones de implementacion. |
+| [PARITY.md](PARITY.md) | Human-readable Python ↔ TypeScript parity matrix. |
+| [parity-contract.json](parity-contract.json) | Structured capability contract (source of truth). |
 
-## Contratos y paridad
+## Operations
 
-| Archivo | Proposito |
+| File | Purpose |
 |---|---|
-| [PARITY.md](PARITY.md) | Tabla humana de paridad Python/TypeScript. |
-| [parity-contract.json](parity-contract.json) | Contrato estructurado de capacidades. |
+| [MONGODB-ATLAS.md](MONGODB-ATLAS.md) | MongoDB local and Atlas cloud. |
+| [RBAC-REGISTRO.md](RBAC-REGISTRO.md) | RBAC, root registration and user/agent permissions. |
+| [token-accounting.md](token-accounting.md) | How tokens are counted in Runs (snapshot vs. cumulative, caching). |
 
-## Operacion
+## Thesis and planning notes
 
-| Archivo | Proposito |
-|---|---|
-| [MONGODB-ATLAS.md](MONGODB-ATLAS.md) | MongoDB local y Atlas cloud. |
-| [GOOGLE-FREE.md](GOOGLE-FREE.md) | Perfil Google free tier. |
-| [RBAC-REGISTRO.md](RBAC-REGISTRO.md) | RBAC, registro root y permisos de usuarios/agentes. |
-| [token-accounting.md](token-accounting.md) | Cómo se cuentan los tokens en Runs (snapshot vs acumulado, caché). |
+Working notes for the thesis live under [thesis/](thesis/) (backlog, metric sheet,
+task briefs, and the optional Google free-tier profile in
+[thesis/GOOGLE-FREE.md](thesis/GOOGLE-FREE.md)). Implementation session logs are in
+[sessions/](sessions/).
 
-## Regla de navegacion
+## Navigation rule
 
-Los README apuntan a carpetas; las ADR explican por que existe cada decision; los archivos
-`src/*` muestran como se implementa.
+READMEs point at folders; ADRs explain **why** each decision exists; the files under
+`src/*` show **how** it is implemented.
