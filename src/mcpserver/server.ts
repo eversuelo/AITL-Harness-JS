@@ -30,7 +30,7 @@ import { MemoryStore } from "../memory/store.js";
 import { ADRStore } from "../decisions/adr.js";
 import { RepoMap } from "../repomap/store.js";
 import { DefinitionStore } from "../projectctx/store.js";
-import { AGENTS_COLLECTION, SKILLS_COLLECTION, type DefinitionKind } from "../projectctx/schemas.js";
+import { AGENTS_COLLECTION, SKILLS_COLLECTION, type DefinitionKind } from "../models/definition.model.js";
 import { MongoGraphSource, type Scope, graphToDot, graphify } from "../graph/index.js";
 import { currentBranch } from "../util/git.js";
 

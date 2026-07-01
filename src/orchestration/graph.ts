@@ -122,7 +122,7 @@ export async function runAgent(
     try {
       const { RoleStore } = await import("../roles/store.js");
       const { roleGate } = await import("../roles/engine.js");
-      const rs = new RoleStore(store.db);
+      const rs = new RoleStore();
       for (const name of opts.roles) {
         const role = await rs.get(project, name);
         if (!role) continue;
@@ -180,7 +180,7 @@ export async function runAgent(
   if (opts.skills !== false) {
     try {
       const { preamble, selected } = await routeSkills(project, promptText, {
-        store: new DefinitionStore("skill", store.db),
+        store: new DefinitionStore("skill"),
       });
       selectedSkills = selected;
       if (preamble) preambles.push(preamble);
