@@ -1249,6 +1249,432 @@ program
     }
   });
 
+// ── Extended per-command help ────────────────────────────────────────────────
+// Concrete examples + notes appended (commander `addHelpText("after", …)`) to every
+// command and subcommand, keyed by its space-joined path (no `aitl` prefix). Shown by
+// `aitl <cmd> --help`. Purely additive: descriptions/behavior are unchanged.
+const HELP_EXAMPLES: Record<string, string> = {
+  "interactive": `
+Examples:
+  aitl                      # bare invocation opens the panel
+  aitl -i
+  aitl interactive
+
+The panel supervises child processes (MCP server, web UI) and runs commands; it requires a TTY.`,
+
+  "check-db": `
+Examples:
+  aitl check-db
+
+Notes:
+  Tries MONGODB_URI, then MONGODB_URI_FALLBACK. Also reports RBAC readiness (users
+  collection, unique indexes, root user). Exit code 1 if RBAC is not ready.`,
+
+  "init-db": `
+Examples:
+  aitl init-db
+
+Notes:
+  Idempotent. Creates collections, scalar/text indexes and Atlas $vectorSearch indexes.
+  Run once per database (and again after changing EMBEDDING_DIMS).`,
+
+  "ingest": `
+Examples:
+  aitl ingest --path docs --project demo
+  aitl ingest --path ./notes --project demo --repo backend
+
+Notes:
+  Pipeline: parse markdown → classify → embed → upsert. Frontmatter and [[wiki-links]]
+  are preserved. Re-running upserts by slug (no duplicates).`,
+
+  "search": `
+Examples:
+  aitl search "token accounting" --project demo
+  aitl search "auth flow" --project demo --collection decisions --limit 5
+
+Notes:
+  Uses Atlas $vectorSearch; falls back to text search if the vector index is missing.
+  --collection: memory | messages | decisions.`,
+
+  "run": `
+Examples:
+  aitl run "add a health endpoint" --project demo                  # C2 (full harness)
+  aitl run "add a health endpoint" --project demo --bare           # C0 (no memory/skills/gates)
+  aitl run "fix the failing test" --project demo --verify-cmd "npm test"
+  aitl run "harden the upload" --project demo --roles security,architect
+
+Notes:
+  Drives the model-agnostic loop (needs a configured model, e.g. OPENROUTER_API_KEY).
+  --verify-cmd makes the run end only when the command exits 0 (quality gate).
+  Persists a run+transcript; inspect it with: aitl run-show <runId>.`,
+
+  "intervene": `
+Examples:
+  aitl intervene <runId> --reason "had to fix a wrong import" --minutes 3
+
+Notes:
+  Records a human_intervention event on the run (thesis Tabla 4.3 #6). Surfaces in run-show.`,
+
+  "run-show": `
+Examples:
+  aitl run-show 1a2b3c4d-....
+
+Notes:
+  Prints tokens (in/out/total), iters, tool_calls, gate_denials, duration, roles,
+  human interventions and event counts. Host runs also show host_meta (cost/turns/cache)
+  and spec. See docs/token-accounting.md for how tokens are summed.`,
+
+  "run-host": `
+Examples:
+  aitl run-host "implement the spec in SPEC.md" --project demo --host claude-code
+  aitl run-host "refactor utils" --project demo --host codex --cwd ./packages/core
+  aitl run-host "draft notes" --project demo --host claude-code --no-spec-synthesis
+
+Notes:
+  Runs the task OVER an external agent host, wrapped with durable context + telemetry.
+  Claude Code reports measured tokens/cost/turns (via --output-format json). Spec-shaped
+  prompts are auto-classified, persisted, and synthesized with the outcome. No model key needed.`,
+
+  "orchestrate": `
+Examples:
+  aitl orchestrate "migrate the API to v2" --project demo --max 4
+
+Notes:
+  Decomposes the task, runs sub-agents in parallel (fresh context each), and synthesizes.`,
+
+  "synthesize": `
+Examples:
+  aitl synthesize --project demo
+  aitl synthesize --project demo --force
+
+Notes:
+  Compacts the memory bank by category when it exceeds the configured limit (--force
+  ignores the limit). Never touches ADRs.`,
+
+  "repomap": `
+Examples:
+  aitl repomap --root . --project demo
+  aitl repomap --root . --project demo --repo backend
+
+Notes:
+  Builds the symbol map (tree-sitter heuristic) + PageRank and prints the top symbols.
+  Tip: point --root at src to avoid indexing dist/ noise.`,
+
+  "index-repo": `
+Examples:
+  aitl index-repo --root . --project demo
+  aitl index-repo --root . --project demo --repo backend --memory docs --adr docs/adr
+
+Notes:
+  Master indexer: repo map + memory ingest + ADR sync in one pass.`,
+
+  "adr-sync": `
+Examples:
+  aitl adr-sync --dir docs/adr --project demo
+
+Notes:
+  Mirrors Nygard-format ADR markdown into the decisions collection (file → ledger only).`,
+
+  "export": `
+Examples:
+  aitl export --adapter cursor --project demo
+  aitl export --adapter agents_md --project demo --root .
+
+Notes:
+  Adapters: agents_md | cursor | copilot | antigravity | kiro | trae. Incremental write.`,
+
+  "eval": `
+Examples:
+  aitl eval --models openrouter,primary --project eval
+
+Notes:
+  Runs the harness-vs-bare delta across ≥2 models. Concrete benchmarks are stubs (TODO).`,
+
+  "mcp": `
+Examples:
+  aitl mcp                                              # stdio (Claude Code default)
+  aitl mcp --http --host 127.0.0.1 --port 8000 --token "<secret>"
+  aitl mcp --http --socket /tmp/aitl-mcp.sock
+
+Notes:
+  stdio is what most MCP clients use; logs go to stderr/AITL_MCP_LOG_FILE. Use --token
+  when exposing --http beyond localhost (or set AITL_MCP_TOKEN).`,
+
+  "ui": `
+Examples:
+  aitl ui --project demo
+  aitl ui --project demo --api-port 4320 --web-port 5320
+  aitl ui --project demo --no-web        # API only
+
+Notes:
+  Tabs: Memory · Decisions · Prompts · Runs · Graph · Knowledge. Restart it after upgrading
+  to pick up new API routes. API → :4317/api, SPA → :5317 by default.`,
+
+  "migrate-atlas": `
+Examples:
+  aitl migrate-atlas "mongodb+srv://user:pass@cluster.mongodb.net/aitl" --to-db aitl --dry-run
+  aitl migrate-atlas "<target-uri>" --to-db aitl --drop
+
+Notes:
+  Copies data only; run init-db on the target for indexes. --dry-run reports counts without writing.`,
+
+  "hydrate": `
+Examples:
+  aitl hydrate "what did we decide about auth?" --project demo --no-vector
+  echo '{"prompt":"..."}' | aitl hydrate --project demo
+
+Notes:
+  Prints a durable-context preamble to stdout. Designed as a Claude Code UserPromptSubmit
+  hook (its stdout is injected into the model's context). --no-vector is recommended per-prompt.`,
+
+  "capture-session": `
+Examples:
+  aitl capture-session --project demo --transcript ~/.claude/projects/<dir>/<session>.jsonl --session <id>
+  cat stop-hook.json | aitl capture-session --project demo
+
+Notes:
+  Designed as a Claude Code Stop hook. Records the session as a run with MEASURED tokens,
+  links the ADRs/memories/prompts it produced (per-session graph), and writes a memory
+  summary + context snapshot. Re-running with the same --session refreshes it.`,
+
+  "review": `
+Examples:
+  aitl review @diff.txt --project demo --roles security,architect
+  aitl review "DROP TABLE users;" --project demo --roles security
+
+Notes:
+  Engineering roles critique a target → a DecisionBrief that ASSISTS the engineer (it does
+  not decide). @file reads the target from a file.`,
+
+  // ── parents (overview + pointer to subcommands) ──
+  "user": `
+Subcommands: bootstrap | verify | list | create | set-role | disable
+Example:  aitl user list`,
+  "config": `
+Subcommands: path | show | export | import | set | unset
+Example:  aitl config show`,
+  "prompt": `
+Subcommands: add | list | search
+Example:  aitl prompt list --project demo`,
+  "adr": `
+Subcommands: history
+Example:  aitl adr history 0026 --project demo --diff`,
+  "memory": `
+Subcommands: history
+Example:  aitl memory history my-slug --project demo --diff`,
+  "software": `
+Subcommands: add | list | get | rm
+Example:  aitl software list`,
+  "repo": `
+Subcommands: add | list | get | rm
+Example:  aitl repo list --project demo`,
+  "branch": `
+Subcommands: sync | list | rm
+Example:  aitl branch sync --project demo --repo backend`,
+  "role": `
+Subcommands: seed | list | rm | gate-check
+Example:  aitl role list --project demo`,
+  "build": `
+Subcommands: skill | agent | seed
+Example:  aitl build skill code-review --project demo`,
+  "init": `
+Subcommands: agent | claude
+Example:  aitl init claude --project demo`,
+
+  // ── user subcommands ──
+  "user bootstrap": `
+Examples:
+  aitl user bootstrap
+
+Notes:
+  Creates the env-configured bootstrap user if missing (AITL_BOOTSTRAP_*).`,
+  "user verify": `
+Examples:
+  aitl user verify --username root --email root@x.com --password "<pw>"`,
+  "user list": `
+Examples:
+  aitl user list
+
+Notes:
+  Root-only. Never prints password hashes.`,
+  "user create": `
+Examples:
+  aitl user create --username alice --email alice@x.com --password "<12+ chars>" --role admin
+
+Notes:
+  Root-only; audited. Roles: root | admin | user | agent | auditor.`,
+  "user set-role": `
+Examples:
+  aitl user set-role --username alice --role auditor
+
+Notes:
+  Root-only; audited.`,
+  "user disable": `
+Examples:
+  aitl user disable --username alice
+  aitl user disable --username alice --enable     # re-enable`,
+
+  // ── config subcommands ──
+  "config path": `
+Examples:
+  aitl config path          # prints ~/.aitl/config.json (or $AITL_HOME)`,
+  "config show": `
+Examples:
+  aitl config show
+  aitl config show --secrets        # reveal secrets (handle with care)
+
+Notes:
+  Effective config = env > file > defaults. Secrets masked unless --secrets.`,
+  "config export": `
+Examples:
+  aitl config export --out profile.json
+  aitl config export --secrets --out profile.json    # do NOT share`,
+  "config import": `
+Examples:
+  aitl config import profile.json
+  aitl config import profile.json --merge`,
+  "config set": `
+Examples:
+  aitl config set MONGODB_URI "mongodb+srv://user:pass@cluster.mongodb.net/aitl?appName=app"
+  aitl config set MONGODB_DB aitl
+  aitl config set OPENROUTER_API_KEY "<key>"
+
+Notes:
+  URL-encode special chars in passwords (e.g. * → %2A). Stored in plain text locally; never commit it.`,
+  "config unset": `
+Examples:
+  aitl config unset OPENROUTER_API_KEY`,
+
+  // ── prompt subcommands ──
+  "prompt add": `
+Examples:
+  aitl prompt add "implement the spec" --project demo --title "spec-foo" --tags spec,sdd`,
+  "prompt list": `
+Examples:
+  aitl prompt list --project demo
+  aitl prompt list --project demo --tag spec --limit 20`,
+  "prompt search": `
+Examples:
+  aitl prompt search "auth" --project demo`,
+
+  // ── adr / memory history ──
+  "adr history": `
+Examples:
+  aitl adr history 0026 --project demo
+  aitl adr history 0026 --project demo --diff
+  aitl adr history 0026 --project demo --from 1 --to 3`,
+  "memory history": `
+Examples:
+  aitl memory history project-identity --project demo --diff`,
+
+  // ── software subcommands ──
+  "software add": `
+Examples:
+  aitl software add acme --display "ACME Platform" --projects demo,web --tags saas`,
+  "software list": `
+Examples:
+  aitl software list
+  aitl software list --tag saas`,
+  "software get": `
+Examples:
+  aitl software get acme`,
+  "software rm": `
+Examples:
+  aitl software rm acme`,
+
+  // ── repo subcommands ──
+  "repo add": `
+Examples:
+  aitl repo add backend --project demo --software acme --remote git@github.com:acme/backend.git --branch main --path ./backend`,
+  "repo list": `
+Examples:
+  aitl repo list --project demo
+  aitl repo list --software acme`,
+  "repo get": `
+Examples:
+  aitl repo get backend --project demo`,
+  "repo rm": `
+Examples:
+  aitl repo rm backend --project demo`,
+
+  // ── branch subcommands ──
+  "branch sync": `
+Examples:
+  aitl branch sync --project demo --repo backend --root .
+
+Notes:
+  Reads local git branches, classifies them (main/develop/release/feature/…) and detects
+  the real base by fork-point. Falls back to gitflow conventions without git.`,
+  "branch list": `
+Examples:
+  aitl branch list --project demo
+  aitl branch list --project demo --repo backend --kind feature`,
+  "branch rm": `
+Examples:
+  aitl branch rm feature/x --project demo --repo backend`,
+
+  // ── role subcommands ──
+  "role seed": `
+Examples:
+  aitl role seed --project demo
+
+Notes:
+  Seeds security, devops, qa, architect, devsecops.`,
+  "role list": `
+Examples:
+  aitl role list --project demo`,
+  "role rm": `
+Examples:
+  aitl role rm security --project demo`,
+  "role gate-check": `
+Examples:
+  aitl role gate-check .env --project demo --role security
+  aitl role gate-check src/app.ts --project demo --role security
+
+Notes:
+  Deterministic veto for a path (no model). Useful in CI/pre-commit.`,
+
+  // ── build subcommands ──
+  "build skill": `
+Examples:
+  aitl build skill code-review --project demo --desc "review diffs for bugs"
+  aitl build skill api-style --project demo --from docs/api-style.md --tags conventions`,
+  "build agent": `
+Examples:
+  aitl build agent triager --project demo --host claude-code --model anthropic/claude-3.5-sonnet`,
+  "build seed": `
+Examples:
+  aitl build seed --project demo
+
+Notes:
+  Registers the master skills (definition-builder, repo-indexer).`,
+
+  // ── init subcommands ──
+  "init agent": `
+Examples:
+  aitl init agent --project demo --mcp aitl-js --out AGENTS.md
+  aitl init agent -i
+
+Notes:
+  Writes an AGENTS.md operating contract (consult the MCP before decisions, persist after).`,
+  "init claude": `
+Examples:
+  aitl init claude --project demo --mcp aitl-js --out CLAUDE.md
+  aitl init claude --project demo --force        # overwrite an existing CLAUDE.md
+
+Notes:
+  Writes a CLAUDE.md that wires Claude Code to this harness: MCP contract + measurement +
+  setup checklist (.mcp.json, permissions, hooks, Mongo). Won't overwrite without --force.`,
+};
+
+function attachHelpExamples(cmd: Command, prefix: string): void {
+  const key = prefix ? `${prefix} ${cmd.name()}` : cmd.name();
+  const extra = HELP_EXAMPLES[key];
+  if (extra) cmd.addHelpText("after", extra);
+  for (const sub of cmd.commands) attachHelpExamples(sub, key);
+}
+for (const c of program.commands) attachHelpExamples(c, "");
+
 program.parseAsync(process.argv).catch((err) => {
   console.error(err);
   process.exit(1);
