@@ -116,37 +116,11 @@ export const HistoryEntrySchema = z.object({
 });
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 
-// ── Symbol: a repo-map symbol with its PageRank importance ───────────────────
-export const SymbolSchema = z.object({
-  ...BaseShape,
-  repo: z.string().nullable().default(null), // repo sub-scope within the project (ADR-0028)
-  file: z.string(),
-  name: z.string(),
-  kind: z.string(),
-  refs: z.array(z.string()).default([]),
-  pagerank: z.number().default(0),
-  mtime: z.number().default(0),
-});
-export type Symbol = z.infer<typeof SymbolSchema>;
-
-// ── Convention: a parsed convention/pattern rule ─────────────────────────────
-export const ConventionSchema = z.object({
-  ...BaseShape,
-  scope_glob: z.string().default("**/*"),
-  rule: z.string().default(""),
-  severity: z.enum(["info", "warn", "error"]).default("warn"),
-});
-export type Convention = z.infer<typeof ConventionSchema>;
-
-// ── Category: per-project classification taxonomy node ───────────────────────
-export const CategorySchema = z.object({
-  ...BaseShape,
-  name: z.string(),
-  kind: z.enum(["memory", "chat"]),
-  description: z.string().default(""),
-  rules: z.record(z.unknown()).default({}),
-});
-export type Category = z.infer<typeof CategorySchema>;
+// ── Symbol / Convention / Category ───────────────────────────────────────────
+// Migrated to Mongoose models (single source of shape + validation + types):
+//   Symbol     → src/models/symbol.model.ts
+//   Convention → src/models/convention.model.ts
+//   Category   → src/models/category.model.ts
 
 // ── Event: loop / harness event, for thesis analysis ─────────────────────────
 export const EventSchema = z.object({
@@ -164,6 +138,4 @@ export const makeMessage = (v: z.input<typeof MessageSchema>): Message => Messag
 export const makeMemoryDoc = (v: z.input<typeof MemoryDocSchema>): MemoryDoc => MemoryDocSchema.parse(v);
 export const makeADR = (v: z.input<typeof ADRSchema>): ADR => ADRSchema.parse(v);
 export const makeHistoryEntry = (v: z.input<typeof HistoryEntrySchema>): HistoryEntry => HistoryEntrySchema.parse(v);
-export const makeSymbol = (v: z.input<typeof SymbolSchema>): Symbol => SymbolSchema.parse(v);
-export const makeConvention = (v: z.input<typeof ConventionSchema>): Convention => ConventionSchema.parse(v);
 export const makeEvent = (v: z.input<typeof EventSchema>): Event => EventSchema.parse(v);

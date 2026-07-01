@@ -25,15 +25,15 @@ import {
 } from "./memory/schemas.js";
 import type {
   ADR as DecisionDoc,
-  Category,
-  Convention,
   Event as LoopEvent,
   MemoryDoc,
   Message,
   Run,
-  Symbol as SymbolDoc,
   ToolCall,
 } from "./memory/schemas.js";
+import type { Category } from "./models/category.model.js";
+import type { Convention } from "./models/convention.model.js";
+import type { Symbol as SymbolDoc } from "./models/symbol.model.js";
 
 export { DecisionDocSchema, LoopEventSchema, ToolCallSchema };
 export type { Run, Message, MemoryDoc, DecisionDoc, SymbolDoc, Convention, Category, LoopEvent, ToolCall };

@@ -8,16 +8,18 @@
 
 import { promises as fs } from "node:fs";
 import type { Db } from "mongodb";
-import { getDb } from "../db/client.js";
-import { makeSymbol } from "../memory/schemas.js";
+import { ensureMongoose } from "../db/mongoose.js";
+import { SymbolModel, makeSymbol } from "../models/symbol.model.js";
 import { parseTree } from "./parser.js";
 import { rankSymbols, selectWithinBudget } from "./ranker.js";
 
 export class RepoMap {
-  private db: Db;
+  // Retained for call-site compatibility (`new RepoMap(store.db)`); the symbols
+  // collection is now accessed through the Mongoose `SymbolModel`, not this handle.
+  private db?: Db;
 
   constructor(db?: Db) {
-    this.db = db ?? getDb();
+    this.db = db;
   }
 
   /**
@@ -26,6 +28,7 @@ export class RepoMap {
    * are replaced (rebuilding one repo does not wipe the project's other repos).
    */
   async build(root: string, project: string, repo: string | null = null): Promise<number> {
+    await ensureMongoose();
     const files = await parseTree(root);
     const scores = rankSymbols(files);
 
@@ -38,7 +41,7 @@ export class RepoMap {
       }
     }
 
-    await this.db.collection("symbols").deleteMany(repo ? { project, repo } : { project, repo: null });
+    await SymbolModel.deleteMany(repo ? { project, repo } : { project, repo: null });
     const docs = files.flatMap((fsym) =>
       fsym.defs.map(([name, kind]) =>
         makeSymbol({
@@ -53,15 +56,16 @@ export class RepoMap {
         }),
       ),
     );
-    if (docs.length) await this.db.collection("symbols").insertMany(docs);
+    if (docs.length) await SymbolModel.insertMany(docs);
     return docs.length;
   }
 
   /** Render the top-ranked symbols within a token budget (agent-facing). Optional repo filter. */
   async render(project: string, opts: { maxTokens?: number; repo?: string } = {}): Promise<string> {
+    await ensureMongoose();
     const query: Record<string, unknown> = { project };
     if (opts.repo !== undefined) query.repo = opts.repo;
-    const rows = await this.db.collection("symbols").find(query).toArray();
+    const rows = await SymbolModel.find(query).lean();
     const scores = new Map<string, number>();
     for (const r of rows) {
       scores.set(`${r.file}${String.fromCharCode(1)}${r.name}`, (r.pagerank as number) ?? 0);
