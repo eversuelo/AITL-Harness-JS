@@ -1,0 +1,24 @@
+# Local secrets / config — never published
+.env
+.env.*
+!.env.example
+.mcp.json
+
+node_modules/
+logs/
+npm-debug.log*
+
+# Lockfiles are not part of a published package
+package-lock.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
+# Ship the compiled runtime only — not tests or source maps (files:["dist"] already
+# excludes src/docs/web/scripts; these trim the test artifacts inside dist)
+dist/**/*.test.js
+dist/**/*.test.d.ts
+dist/**/*.test.js.map
+dist/**/*.js.map
+
+.git/
+.github/

@@ -1,0 +1,118 @@
+{
+  "name": "aitl-mcp",
+  "version": "0.1.0",
+  "description": "Agent In The Loop (AITL) — model-agnostic agent harness with durable, structured memory backed by MongoDB Atlas Vector Search. TypeScript port.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Everardo",
+  "keywords": [
+    "agent",
+    "mcp",
+    "model-context-protocol",
+    "mongodb",
+    "mongoose",
+    "vector-search",
+    "memory",
+    "llm",
+    "cli",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eversuelo/aitl-harness-mcp.git"
+  },
+  "homepage": "https://github.com/eversuelo/aitl-harness-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/eversuelo/aitl-harness-mcp/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "aitl": "./dist/src/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepare": "npm run build",
+    "start": "node dist/src/cli.js",
+    "dev": "tsx watch src/cli.ts",
+    "dev:watch": "tsx watch src/cli.ts",
+    "dev:cli": "tsx src/cli.ts",
+    "dev:check-db": "tsx scripts/checkDb.ts",
+    "dev:init-db": "tsx scripts/initDb.ts",
+    "dev:mcp": "tsx watch src/mcpserver/server.ts",
+    "dev:mcp:watch": "tsx watch src/mcpserver/server.ts",
+    "dev:mcp:http": "tsx watch src/cli.ts mcp --http --host 127.0.0.1 --port 8000 --path /mcp",
+    "dev:mcp:socket": "tsx watch src/cli.ts mcp --http --socket /tmp/aitl-mcp.sock --path /mcp",
+    "dev:ui": "tsx watch src/cli.ts ui",
+    "aitl": "tsx src/cli.ts",
+    "aitl:dist": "node dist/src/cli.js",
+    "check-db": "tsx scripts/checkDb.ts",
+    "db:check": "tsx scripts/checkDb.ts",
+    "init-db": "tsx scripts/initDb.ts",
+    "db:init": "tsx scripts/initDb.ts",
+    "mcp": "tsx src/mcpserver/server.ts",
+    "mcp:dist": "node dist/src/mcpserver/server.js",
+    "mcp:http": "tsx src/cli.ts mcp --http --host 127.0.0.1 --port 8000 --path /mcp",
+    "mcp:http:dist": "node dist/src/cli.js mcp --http --host 127.0.0.1 --port 8000 --path /mcp",
+    "mcp:socket": "tsx src/cli.ts mcp --http --socket /tmp/aitl-mcp.sock --path /mcp",
+    "mcp:socket:dist": "node dist/src/cli.js mcp --http --socket /tmp/aitl-mcp.sock --path /mcp",
+    "ui": "tsx src/cli.ts ui",
+    "user:bootstrap": "tsx src/cli.ts user bootstrap",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "verify": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run verify"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@google/genai": "^0.7.0",
+    "@modelcontextprotocol/sdk": "^1.2.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "gray-matter": "^4.0.3",
+    "ignore": "^7.0.5",
+    "mongodb": "^6.8.0",
+    "mongoose": "^9.7.3",
+    "openai": "^4.56.0",
+    "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/langgraph-checkpoint-mongodb": "^0.1.0",
+    "@xenova/transformers": "^2.17.2",
+    "web-tree-sitter": "^0.22.6"
+  },
+  "devDependencies": {
+    "@radix-ui/react-label": "^2.1.0",
+    "@radix-ui/react-select": "^2.1.2",
+    "@radix-ui/react-separator": "^1.1.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tabs": "^1.1.1",
+    "@tailwindcss/typography": "^0.5.15",
+    "@types/node": "^22.5.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.4.20",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.460.0",
+    "postcss": "^8.4.49",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
+    "tailwind-merge": "^2.5.5",
+    "tailwindcss": "^3.4.15",
+    "tailwindcss-animate": "^1.0.7",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.21"
+  }
+}
