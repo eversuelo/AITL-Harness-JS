@@ -29,6 +29,21 @@ test("buildSymbolGraph: no self-edges", () => {
   assert.equal(g.edges.length, 0);
 });
 
+test("buildSymbolGraph: node carries branch; ref edges still resolve by name", () => {
+  const symbols: SymbolRow[] = [
+    { file: "a.ts", name: "foo", refs: ["bar"], pagerank: 0.5, branch: "feat/x" },
+    { file: "b.ts", name: "bar", refs: ["foo"] }, // no branch → defaults to null
+  ];
+  const g = buildSymbolGraph(symbols, "p");
+  assert.equal(g.nodes[0].branch, "feat/x");
+  assert.equal(g.nodes[1].branch, null); // missing branch normalizes to null
+  // ref edges are unchanged by the new field.
+  assert.deepEqual(g.edges, [
+    { source: "sym:a.ts::foo", target: "sym:b.ts::bar", type: "ref" },
+    { source: "sym:b.ts::bar", target: "sym:a.ts::foo", type: "ref" },
+  ]);
+});
+
 test("buildMemoryGraph: link edges only for resolvable slugs", () => {
   const mems: MemoryRow[] = [
     { slug: "x", category: "decision", links: ["y", "ghost"] },

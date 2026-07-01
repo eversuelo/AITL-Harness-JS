@@ -1,0 +1,60 @@
+/**
+ * Mongoose model for the `decisions` collection — an Architecture Decision Record (Nygard).
+ *
+ * ADRs are the durable answer to decision amnesia (Pain point #1): they live as markdown in
+ * git AND here, machine-retrievable via Atlas `$vectorSearch` alongside memory and chats.
+ * Keyed by (project, id). `version` is bumped on each content change (prior versions archived
+ * append-only in `decisions_history`, ADR-0027). `embedding` is set by the embedder on write
+ * and stripped only on the documented read projections.
+ *
+ * Extracted from the shared Zod `ADRSchema` (memory/schemas.ts): Mongoose is now the single
+ * source of shape + validation + types. `BASE_SCHEMA_OPTS` keeps documents byte-compatible
+ * with the pre-migration driver-written docs (no `__v`, no auto timestamps, empty `{}`
+ * preserved).
+ */
+
+import { Schema, model, type InferSchemaType } from "mongoose";
+import { BASE_SCHEMA_OPTS } from "../db/mongoose.js";
+
+export const DECISIONS_COLLECTION = "decisions";
+
+const now = () => new Date();
+
+const adrSchema = new Schema(
+  {
+    project: { type: String, required: true }, // Project scope; isolates multi-project memory.
+    created_at: { type: Date, default: now },
+    updated_at: { type: Date, default: now },
+    id: { type: String, required: true }, // e.g. "0001"
+    title: { type: String, required: true },
+    context: { type: String, required: true },
+    decision: { type: String, required: true },
+    consequences: { type: String, required: true },
+    status: { type: String, enum: ["proposed", "accepted", "superseded"], default: "accepted" },
+    model: { type: String, default: null },
+    trigger: { type: String, default: null },
+    git_ref: { type: String, default: null },
+    version: { type: Number, default: 1 }, // bumped on each content change; history in decisions_history
+    actor_id: { type: String, default: null }, // who authored the current version (provenance)
+    actor_role: { type: String, default: null },
+    branch: { type: String, default: null }, // git branch this version was authored on (ADR-0028)
+    embedding: { type: [Number], default: null },
+  },
+  { ...BASE_SCHEMA_OPTS, collection: DECISIONS_COLLECTION },
+);
+
+export type ADR = InferSchemaType<typeof adrSchema>;
+
+export const DecisionModel = model("Decision", adrSchema);
+
+/** Build + validate an ADR (fills schema defaults). Mirrors the former Zod builder. */
+export const makeADR = (
+  v: Partial<ADR> & { project: string; id: string; title: string; context: string; decision: string; consequences: string },
+): ADR => {
+  const doc = new DecisionModel(v);
+  const err = doc.validateSync();
+  if (err) throw err;
+  const obj = doc.toObject() as ADR & { _id?: unknown };
+  delete obj._id; // Mongo assigns _id on insert; keep the record _id-free like the Zod builder did
+  return obj;
+};

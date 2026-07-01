@@ -4,10 +4,17 @@
  * Reconstructs the full version chain of an ADR or memory doc: the archived
  * snapshots from `*_history` (oldest first) followed by the current live doc as
  * the newest version. Used by the CLI `history` commands (and reusable by the API).
+ *
+ * Post-Mongoose migration this reads through the models: `kind` picks the live model
+ * (decisions→DecisionModel / memory→MemoryModel) and its natural key, and the matching
+ * history model (decisions_history→DecisionHistoryModel / memory_history→MemoryHistoryModel).
  */
 
-import type { Db } from "mongodb";
-import { getDb } from "../db/client.js";
+import type { Model } from "mongoose";
+import { DecisionModel } from "../models/decision.model.js";
+import { modelFor as historyModelFor } from "../models/history.model.js";
+import { MemoryModel } from "../models/memory.model.js";
+import { ensureMongoose } from "../db/mongoose.js";
 
 export type HistoryKind = "decision" | "memory";
 
@@ -22,25 +29,30 @@ export interface VersionEntry {
   branch?: string | null;
 }
 
-const CONFIG = {
-  decision: { live: "decisions", history: "decisions_history", key: "id" },
-  memory: { live: "memory", history: "memory_history", key: "slug" },
-} as const;
+// Live model widened to `Model<any>` so the two distinct model generics resolve against a
+// single call signature; `key` is the natural id used to query the live doc.
+const CONFIG: Record<HistoryKind, { model: Model<any>; key: string }> = {
+  // biome-ignore lint/suspicious/noExplicitAny: intentional widening across two model generics
+  decision: { model: DecisionModel as unknown as Model<any>, key: "id" },
+  // biome-ignore lint/suspicious/noExplicitAny: intentional widening across two model generics
+  memory: { model: MemoryModel as unknown as Model<any>, key: "slug" },
+};
 
 /** Load the full version chain (oldest → newest, newest = live), or [] if not found. */
 export async function loadVersionChain(
   kind: HistoryKind,
   project: string,
   ref: string,
-  db: Db = getDb(),
 ): Promise<VersionEntry[]> {
+  await ensureMongoose();
   const cfg = CONFIG[kind];
-  const live = await db.collection(cfg.live).findOne({ project, [cfg.key]: ref }, { projection: { embedding: 0 } });
-  const history = await db
-    .collection(cfg.history)
-    .find({ project, ref }, { projection: { "snapshot.embedding": 0 } })
+  const live = (await cfg.model.findOne({ project, [cfg.key]: ref }, { embedding: 0 }).lean()) as
+    | Record<string, unknown>
+    | null;
+  const history = (await historyModelFor(kind)
+    .find({ project, ref }, { "snapshot.embedding": 0 })
     .sort({ version: 1 })
-    .toArray();
+    .lean()) as Record<string, unknown>[];
 
   const entries: VersionEntry[] = history.map((h) => ({
     version: Number(h.version),

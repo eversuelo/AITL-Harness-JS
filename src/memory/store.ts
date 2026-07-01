@@ -8,13 +8,44 @@
  *   - lexical search via the `$text` index (fallback)
  *   - shared write-back so all subagents read/write one bank (Pain point #4)
  *
- * Nothing outside this module and `src/db/` should touch the MongoDB driver directly.
+ * Post-Mongoose migration this routes through the models (memory→MemoryModel,
+ * messages→MessageModel, events→EventModel, decisions→DecisionModel) instead of the raw
+ * driver. Each entry method `await ensureMongoose()` first. The `db` getter is retained
+ * (backed by the legacy driver client) so callers that still read sibling collections
+ * (conventions, recency scans in lifecycle.ts, RepoMap) keep working during coexistence.
  */
 
 import type { Db, Document } from "mongodb";
+import type { Model, PipelineStage } from "mongoose";
 import { getDb } from "../db/client.js";
-import type { Event, MemoryDoc, Message } from "./schemas.js";
+import { ensureMongoose } from "../db/mongoose.js";
+import { DecisionModel } from "../models/decision.model.js";
+import { EventModel } from "../models/event.model.js";
+import { MemoryModel } from "../models/memory.model.js";
+import { MessageModel } from "../models/message.model.js";
+import type { Event } from "../models/event.model.js";
+import type { MemoryDoc } from "../models/memory.model.js";
+import type { Message } from "../models/message.model.js";
 import { MEMORY_CONTENT_FIELDS, type VersioningActor, archiveAndBumpVersion } from "./versioning.js";
+
+/**
+ * Map a collection-name argument to the model that backs it (vector/text search routing).
+ * Returns a widened `Model<any>` so the caller resolves against a single call signature
+ * (the three models are distinct generic types). VECTOR_COLLECTIONS = messages/memory/decisions.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: intentional widening across three model generics
+function modelForCollection(collection: string): Model<any> {
+  switch (collection) {
+    case "messages":
+      return MessageModel as unknown as Model<any>;
+    case "memory":
+      return MemoryModel as unknown as Model<any>;
+    case "decisions":
+      return DecisionModel as unknown as Model<any>;
+    default:
+      throw new Error(`MemoryStore: no model registered for collection '${collection}'`);
+  }
+}
 
 export class MemoryStore {
   readonly db: Db;
@@ -26,13 +57,11 @@ export class MemoryStore {
   // ── writes ───────────────────────────────────────────────────────────
   /** Insert/update a memory doc, keyed by (project, slug). */
   async upsertMemory(doc: MemoryDoc, opts: { actor?: VersioningActor; branch?: string | null } = {}): Promise<string> {
+    await ensureMongoose();
     doc.updated_at = new Date();
     // Archive the prior version (if content changed) and set doc.version BEFORE overwrite.
     await archiveAndBumpVersion({
-      db: this.db,
       kind: "memory",
-      liveCollection: "memory",
-      historyCollection: "memory_history",
       query: { project: doc.project, slug: doc.slug },
       nextDoc: doc,
       contentFields: MEMORY_CONTENT_FIELDS,
@@ -40,24 +69,25 @@ export class MemoryStore {
       actor: opts.actor,
       branch: opts.branch,
     });
-    await this.db
-      .collection("memory")
-      .updateOne({ project: doc.project, slug: doc.slug }, { $set: doc }, { upsert: true });
+    await MemoryModel.updateOne({ project: doc.project, slug: doc.slug }, { $set: doc }, { upsert: true });
     return doc.slug;
   }
 
   /** Append a transcript turn (shared write-back). */
   async appendMessage(msg: Message): Promise<void> {
-    await this.db.collection("messages").insertOne(msg);
+    await ensureMongoose();
+    await MessageModel.create(msg);
   }
 
   async logEvent(event: Event): Promise<void> {
-    await this.db.collection("events").insertOne(event);
+    await ensureMongoose();
+    await EventModel.create(event);
   }
 
   /** Read a run's transcript in order (used to resume a run from its durable state). */
   async getMessages(runId: string): Promise<Document[]> {
-    return this.db.collection("messages").find({ run_id: runId }).sort({ idx: 1 }).toArray();
+    await ensureMongoose();
+    return MessageModel.find({ run_id: runId }).sort({ idx: 1 }).lean() as unknown as Promise<Document[]>;
   }
 
   // ── semantic search (Atlas Vector Search) ────────────────────────────
@@ -70,6 +100,7 @@ export class MemoryStore {
     queryEmbedding: number[],
     opts: { project?: string; category?: string; limit?: number; numCandidates?: number } = {},
   ): Promise<Document[]> {
+    await ensureMongoose();
     const { project, category, limit = 10, numCandidates = 200 } = opts;
     const filter: Record<string, unknown> = {};
     if (project !== undefined) filter.project = project;
@@ -88,8 +119,8 @@ export class MemoryStore {
       { $vectorSearch: vectorSearch },
       { $addFields: { score: { $meta: "vectorSearchScore" } } },
       { $project: { embedding: 0 } },
-    ];
-    return this.db.collection(collection).aggregate(pipeline).toArray();
+    ] as unknown as PipelineStage[];
+    return modelForCollection(collection).aggregate(pipeline) as unknown as Promise<Document[]>;
   }
 
   // ── lexical search (fallback) ────────────────────────────────────────
@@ -98,47 +129,46 @@ export class MemoryStore {
     query: string,
     opts: { project?: string; limit?: number } = {},
   ): Promise<Document[]> {
+    await ensureMongoose();
     const { project, limit = 10 } = opts;
     const filter: Record<string, unknown> = { $text: { $search: query } };
     if (project !== undefined) filter.project = project;
-    return this.db
-      .collection(collection)
-      .find(filter, { projection: { score: { $meta: "textScore" }, embedding: 0 } })
+    return modelForCollection(collection)
+      .find(filter, { score: { $meta: "textScore" }, embedding: 0 })
       .sort({ score: { $meta: "textScore" } })
       .limit(limit)
-      .toArray();
+      .lean() as unknown as Promise<Document[]>;
   }
 
   // ── stats (used by the synthesizer trigger) ──────────────────────────
   async memoryDocCount(project: string): Promise<number> {
-    return this.db.collection("memory").countDocuments({ project });
+    await ensureMongoose();
+    return MemoryModel.countDocuments({ project });
   }
 
   /** Rough token estimate (~4 chars/token) over a project's memory bodies. */
   async memoryTokenEstimate(project: string): Promise<number> {
-    const agg = await this.db
-      .collection("memory")
-      .aggregate([
-        { $match: { project } },
-        { $group: { _id: null, chars: { $sum: { $strLenCP: { $ifNull: ["$body", ""] } } } } },
-      ])
-      .toArray();
+    await ensureMongoose();
+    const agg = (await MemoryModel.aggregate([
+      { $match: { project } },
+      { $group: { _id: null, chars: { $sum: { $strLenCP: { $ifNull: ["$body", ""] } } } } },
+    ])) as { chars?: number }[];
     const chars = agg.length ? (agg[0].chars as number) : 0;
     return Math.floor(chars / 4);
   }
 
   async iterMemory(project: string, opts: { category?: string } = {}): Promise<Document[]> {
+    await ensureMongoose();
     const filter: Record<string, unknown> = { project };
     if (opts.category !== undefined) filter.category = opts.category;
-    return this.db.collection("memory").find(filter).toArray();
+    return MemoryModel.find(filter).lean() as unknown as Promise<Document[]>;
   }
 
   // ── single-doc reads/deletes (used by the memory-admin UI/API) ───────────
   /** Fetch one memory doc by (project, slug); `null` if absent. Strips the vector. */
   async getMemory(project: string, slug: string): Promise<Document | null> {
-    return this.db
-      .collection("memory")
-      .findOne({ project, slug }, { projection: { embedding: 0 } });
+    await ensureMongoose();
+    return MemoryModel.findOne({ project, slug }, { embedding: 0 }).lean() as unknown as Promise<Document | null>;
   }
 
   /** List a project's memory (no embeddings), newest first. */
@@ -146,26 +176,27 @@ export class MemoryStore {
     project: string,
     opts: { category?: string; type?: string; limit?: number } = {},
   ): Promise<Document[]> {
+    await ensureMongoose();
     const filter: Record<string, unknown> = { project };
     if (opts.category !== undefined) filter.category = opts.category;
     if (opts.type !== undefined) filter.type = opts.type;
-    return this.db
-      .collection("memory")
-      .find(filter, { projection: { embedding: 0 } })
+    return MemoryModel.find(filter, { embedding: 0 })
       .sort({ updated_at: -1 })
       .limit(opts.limit ?? 200)
-      .toArray();
+      .lean() as unknown as Promise<Document[]>;
   }
 
   /** Delete one memory doc by (project, slug). Returns whether a doc was removed. */
   async deleteMemory(project: string, slug: string): Promise<boolean> {
-    const res = await this.db.collection("memory").deleteOne({ project, slug });
+    await ensureMongoose();
+    const res = await MemoryModel.deleteOne({ project, slug });
     return res.deletedCount === 1;
   }
 
   /** Distinct project names that have at least one memory doc. */
   async listProjects(): Promise<string[]> {
-    const names = await this.db.collection("memory").distinct("project");
+    await ensureMongoose();
+    const names = await MemoryModel.distinct("project");
     return names.filter((n): n is string => typeof n === "string" && n.length > 0).sort();
   }
 }

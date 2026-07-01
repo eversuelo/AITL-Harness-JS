@@ -12,8 +12,11 @@
 import { randomUUID } from "node:crypto";
 import type { Document } from "mongodb";
 import { ContextManager } from "../context/manager.js";
+import { ensureMongoose } from "../db/mongoose.js";
 import { hydrate, summarizeSession } from "../memory/lifecycle.js";
-import { makeEvent, makeMessage, makeRun } from "../memory/schemas.js";
+import { makeEvent } from "../models/event.model.js";
+import { makeMessage } from "../models/message.model.js";
+import { RunModel, makeRun } from "../models/run.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { routeSkills } from "../projectctx/router.js";
 import { DefinitionStore } from "../projectctx/store.js";
@@ -122,7 +125,7 @@ export async function runAgent(
     try {
       const { RoleStore } = await import("../roles/store.js");
       const { roleGate } = await import("../roles/engine.js");
-      const rs = new RoleStore(store.db);
+      const rs = new RoleStore();
       for (const name of opts.roles) {
         const role = await rs.get(project, name);
         if (!role) continue;
@@ -141,21 +144,21 @@ export async function runAgent(
   let promptText: string; // the task text used to hydrate context
   if (typeof opts.resume === "string" && opts.resume) {
     runId = opts.resume;
-    const doc = await store.db.collection("runs").findOne({ _id: runId as never });
+    await ensureMongoose();
+    const doc = await RunModel.findOne({ _id: runId }).lean();
     if (!doc) throw new Error(`runAgent: cannot resume unknown run '${runId}'`);
     project = (doc.project as string) ?? project;
     const msgs = await store.getMessages(runId);
     convo = rebuildConvo(msgs);
     idx = msgs.length ? Number(msgs[msgs.length - 1].idx ?? msgs.length) : 0;
     promptText = String(msgs.find((m) => m.role === "user")?.content ?? prompt);
-    await store.db
-      .collection("runs")
-      .updateOne({ _id: runId as never }, { $set: { status: "running", ended_at: null } });
+    await RunModel.updateOne({ _id: runId }, { $set: { status: "running", ended_at: null } });
     await store.logEvent(makeEvent({ project, run_id: runId, type: "resume", payload: { from_idx: idx } }));
   } else {
     runId = randomUUID();
     const run = makeRun({ project, model: provider.name, harness_config: { max_iters: maxIters } });
-    await store.db.collection("runs").insertOne({ ...run, _id: runId as never });
+    await ensureMongoose();
+    await RunModel.create({ ...run, _id: runId });
     convo = [{ role: "user", content: prompt }];
     idx = 0;
     promptText = prompt;
@@ -180,7 +183,7 @@ export async function runAgent(
   if (opts.skills !== false) {
     try {
       const { preamble, selected } = await routeSkills(project, promptText, {
-        store: new DefinitionStore("skill", store.db),
+        store: new DefinitionStore("skill"),
       });
       selectedSkills = selected;
       if (preamble) preambles.push(preamble);
@@ -308,9 +311,8 @@ export async function runAgent(
   } catch (err) {
     // Unrecoverable failure: mark the run errored (so it never hangs in "running") and rethrow.
     const message = String(err instanceof Error ? err.message : err).slice(0, 500);
-    await store.db
-      .collection("runs")
-      .updateOne({ _id: runId as never }, { $set: { status: "error", ended_at: new Date(), error: message } });
+    await ensureMongoose();
+    await RunModel.updateOne({ _id: runId }, { $set: { status: "error", ended_at: new Date(), error: message } });
     await store.logEvent(makeEvent({ project, run_id: runId, type: "error", payload: { iter: it, message } }));
     throw err;
   }
@@ -344,23 +346,22 @@ export async function runAgent(
     }
   }
 
-  await store.db
-    .collection("runs")
-    .updateOne(
-      { _id: runId as never },
-      {
-        $set: {
-          status: "done",
-          ended_at: new Date(),
-          token_usage: { input: tokIn, output: tokOut },
-          iters: it,
-          tool_calls: toolCalls,
-          gate_denials: gateDenials,
-          roles: activeRoles.map((r) => r.name),
-          decision_blocked: decisionBrief?.blocked ?? false,
-        },
+  await ensureMongoose();
+  await RunModel.updateOne(
+    { _id: runId },
+    {
+      $set: {
+        status: "done",
+        ended_at: new Date(),
+        token_usage: { input: tokIn, output: tokOut },
+        iters: it,
+        tool_calls: toolCalls,
+        gate_denials: gateDenials,
+        roles: activeRoles.map((r) => r.name),
+        decision_blocked: decisionBrief?.blocked ?? false,
       },
-    );
+    },
+  );
   return {
     run_id: runId,
     final_text: finalText,

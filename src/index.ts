@@ -46,5 +46,5 @@ export {
   AGENTS_COLLECTION,
   SKILLS_COLLECTION,
   makeDefinitionRecord,
-} from "./projectctx/schemas.js";
-export type { DefinitionKind, DefinitionRecord } from "./projectctx/schemas.js";
+} from "./models/definition.model.js";
+export type { DefinitionKind, DefinitionRecord } from "./models/definition.model.js";

@@ -12,7 +12,7 @@
  */
 
 import { denyPathsGate } from "../hooks/gates.js";
-import { makeEvent } from "../memory/schemas.js";
+import { makeEvent } from "../models/event.model.js";
 import type { MemoryStore } from "../memory/store.js";
 import type { PermissionGate } from "../tools/base.js";
 import type { DecisionBrief, Role, RoleVerdict } from "./schema.js";

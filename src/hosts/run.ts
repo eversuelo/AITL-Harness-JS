@@ -10,8 +10,11 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { ensureMongoose } from "../db/mongoose.js";
 import { hydrate } from "../memory/lifecycle.js";
-import { makeEvent, makeMessage, makeRun } from "../memory/schemas.js";
+import { makeEvent } from "../models/event.model.js";
+import { makeMessage } from "../models/message.model.js";
+import { RunModel, makeRun } from "../models/run.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { PromptStore } from "../prompts/store.js";
 import { classifySpec } from "../specs/classify.js";
@@ -64,7 +67,8 @@ export async function runOnHost(
     model: `host:${host.name}`,
     harness_config: { role: "host", host: host.name, spec: spec.isSpec },
   });
-  await store.db.collection("runs").insertOne({ ...run, _id: runId as never });
+  await ensureMongoose();
+  await RunModel.create({ ...run, _id: runId });
   await store.appendMessage(makeMessage({ project, run_id: runId, idx: 0, role: "user", content: prompt }));
 
   // Hydrate the host's prompt with the project's durable context (the harness's value-add).
@@ -86,7 +90,7 @@ export async function runOnHost(
   const recordPrompt = async (extra: Record<string, unknown>): Promise<void> => {
     if (opts.recordPrompt === false) return;
     try {
-      const rec = await new PromptStore(store.db).add({
+      const rec = await new PromptStore().add({
         project,
         prompt,
         source: "host",
@@ -106,9 +110,8 @@ export async function runOnHost(
     result = await host.runTask(fullPrompt, { cwd: opts.cwd, timeoutMs: opts.timeoutMs });
   } catch (err) {
     const message = String(err instanceof Error ? err.message : err).slice(0, 500);
-    await store.db
-      .collection("runs")
-      .updateOne({ _id: runId as never }, { $set: { status: "error", ended_at: new Date(), error: message } });
+    await ensureMongoose();
+    await RunModel.updateOne({ _id: runId }, { $set: { status: "error", ended_at: new Date(), error: message } });
     await store.logEvent(makeEvent({ project, run_id: runId, type: "error", payload: { host: host.name, message } }));
     await recordPrompt({ status: "error", error: message });
     throw err;
@@ -120,8 +123,9 @@ export async function runOnHost(
   await store.appendMessage(
     makeMessage({ project, run_id: runId, idx: 1, role: "assistant", content: result.text, tokens: usage.output }),
   );
-  await store.db.collection("runs").updateOne(
-    { _id: runId as never },
+  await ensureMongoose();
+  await RunModel.updateOne(
+    { _id: runId },
     {
       $set: {
         status,

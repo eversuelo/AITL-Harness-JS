@@ -5,7 +5,7 @@
  */
 
 import { buildDefinition } from "./buildDefinition.js";
-import type { DefinitionRecord } from "../projectctx/schemas.js";
+import type { DefinitionRecord } from "../models/definition.model.js";
 
 const DEFINITION_BUILDER = [
   "# Skill: definition-builder (constructora)",

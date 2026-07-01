@@ -22,15 +22,19 @@ import { recordAudit } from "../auth/audit.js";
 import { type Action, type Actor, type Resource, type Role, can, isRole } from "../auth/rbac.js";
 import { bootstrapBaseUser } from "../auth/users.js";
 import { connectWithFallback, getDb } from "../db/client.js";
+import { ensureMongoose } from "../db/mongoose.js";
+import { McpContextModel } from "../models/mcpContext.model.js";
+import { McpToolCallModel } from "../models/mcpToolCall.model.js";
 import { embedOne } from "../ingest/embedder.js";
 import { extractLinks, parseMarkdownDir } from "../ingest/markdown.js";
 import { Classifier } from "../memory/classifier.js";
-import { MEMORY_TYPES, type MemoryType, makeMemoryDoc } from "../memory/schemas.js";
+import { MEMORY_TYPES, type MemoryType } from "../memory/schemas.js";
+import { makeMemoryDoc } from "../models/memory.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { ADRStore } from "../decisions/adr.js";
 import { RepoMap } from "../repomap/store.js";
 import { DefinitionStore } from "../projectctx/store.js";
-import { AGENTS_COLLECTION, SKILLS_COLLECTION, type DefinitionKind } from "../projectctx/schemas.js";
+import { AGENTS_COLLECTION, SKILLS_COLLECTION, type DefinitionKind } from "../models/definition.model.js";
 import { MongoGraphSource, type Scope, graphToDot, graphify } from "../graph/index.js";
 import { currentBranch } from "../util/git.js";
 
@@ -219,7 +223,8 @@ async function ensureProjectCtxStorage(): Promise<void> {
 async function persistMcpToolCall(doc: Record<string, unknown>): Promise<void> {
   try {
     await ensureMcpStorage();
-    await getDb().collection("mcp_tool_calls").insertOne(doc);
+    await ensureMongoose();
+    await McpToolCallModel.create(doc);
   } catch (err) {
     logEvent("mcp-context:error", { reason: "persist_tool_call_failed", error: errorInfo(err) });
   }
@@ -427,6 +432,7 @@ export function buildServer(): McpServer {
     async ({ project, messages, title, summary, source, model, run_id, tags, context, metadata }) => {
       return runLogged("save_mcp_context", { project, title, summary, source, model, run_id, tags, messages, context, metadata }, async () => {
         await ensureMcpStorage();
+        await ensureMongoose();
         const contextId = randomUUID();
         const contextBody = context ?? {};
         const doc = {
@@ -445,9 +451,9 @@ export function buildServer(): McpServer {
           created_at: new Date(),
           updated_at: new Date(),
         };
-        const result = await getDb().collection("mcp_context").insertOne(doc);
+        const created = await McpContextModel.create(doc);
         return text({
-          id: String(result.insertedId),
+          id: String(created._id),
           context_id: contextId,
           project,
           title,
@@ -474,16 +480,15 @@ export function buildServer(): McpServer {
     async ({ project, limit, source, tag, run_id }) => {
       return runLogged("list_mcp_context", { project, limit, source, tag, run_id }, async () => {
         await ensureMcpStorage();
+        await ensureMongoose();
         const query: Record<string, unknown> = { project };
         if (source) query.source = source;
         if (tag) query.tags = tag;
         if (run_id) query.run_id = run_id;
-        const rows = await getDb()
-          .collection("mcp_context")
-          .find(query, { projection: { content_text: 0 } })
+        const rows = await McpContextModel.find(query, { content_text: 0 })
           .sort({ created_at: -1 })
           .limit(limit)
-          .toArray();
+          .lean();
         return text(rows.map(jsonable));
       });
     },
@@ -496,21 +501,25 @@ export function buildServer(): McpServer {
     async ({ project, query, limit }) => {
       return runLogged("search_mcp_context", { project, query, limit }, async () => {
         await ensureMcpStorage();
-        const coll = getDb().collection("mcp_context");
+        await ensureMongoose();
         let rows: unknown[];
         try {
-          rows = await coll
-            .find({ project, $text: { $search: query } }, { projection: { score: { $meta: "textScore" }, content_text: 0 } })
+          rows = await McpContextModel.find(
+            { project, $text: { $search: query } },
+            { score: { $meta: "textScore" }, content_text: 0 },
+          )
             .sort({ score: { $meta: "textScore" }, created_at: -1 })
             .limit(limit)
-            .toArray();
+            .lean();
         } catch {
           const rx = new RegExp(escapeRegex(query), "i");
-          rows = await coll
-            .find({ project, $or: [{ title: rx }, { summary: rx }, { content_text: rx }] }, { projection: { content_text: 0 } })
+          rows = await McpContextModel.find(
+            { project, $or: [{ title: rx }, { summary: rx }, { content_text: rx }] },
+            { content_text: 0 },
+          )
             .sort({ created_at: -1 })
             .limit(limit)
-            .toArray();
+            .lean();
         }
         return text(rows.map(jsonable));
       });
@@ -644,7 +653,7 @@ export function buildServer(): McpServer {
     },
     async ({ project, id, title, context, decision, consequences, status }) => {
       return runLogged("record_decision", { project, id, title, context, decision, consequences, status }, async () => {
-        const { makeADR } = await import("../memory/schemas.js");
+        const { makeADR } = await import("../models/decision.model.js");
         const adr = makeADR({ project, id, title, context, decision, consequences, status });
         const a = mcpActor();
         await new ADRStore().upsert(adr, { actor: { id: a.id, role: a.role }, branch: currentBranch() });
@@ -1031,7 +1040,7 @@ export function buildServer(): McpServer {
     { project: z.string(), run_id: z.string(), reason: z.string(), minutes: z.number().default(0) },
     async ({ project, run_id, reason, minutes }) => {
       return runLogged("record_human_intervention", { project, run_id, reason, minutes }, async () => {
-        const { makeEvent } = await import("../memory/schemas.js");
+        const { makeEvent } = await import("../models/event.model.js");
         await new MemoryStore().logEvent(makeEvent({ project, run_id, type: "human_intervention", payload: { reason, minutes } }));
         return text({ ok: true, run_id, minutes });
       });

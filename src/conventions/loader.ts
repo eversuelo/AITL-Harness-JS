@@ -7,8 +7,8 @@
  */
 
 import { promises as fs } from "node:fs";
-import { getDb } from "../db/client.js";
-import { type Convention, makeConvention } from "../memory/schemas.js";
+import { ensureMongoose } from "../db/mongoose.js";
+import { ConventionModel, type Convention, makeConvention } from "../models/convention.model.js";
 
 export async function parseAgentsMd(path: string, project: string): Promise<Convention[]> {
   const text = await fs.readFile(path, "utf-8");
@@ -38,9 +38,9 @@ export async function loadConventions(
 ): Promise<Convention[]> {
   const conventions = await parseAgentsMd(path, project);
   if (opts.persist !== false && conventions.length) {
-    const db = getDb();
-    await db.collection("conventions").deleteMany({ project });
-    await db.collection("conventions").insertMany(conventions);
+    await ensureMongoose();
+    await ConventionModel.deleteMany({ project });
+    await ConventionModel.insertMany(conventions);
   }
   return conventions;
 }

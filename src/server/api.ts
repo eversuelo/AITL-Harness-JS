@@ -22,7 +22,8 @@
 
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import type { Server } from "node:http";
-import { MEMORY_TYPES, type MemoryType, makeMemoryDoc } from "../memory/schemas.js";
+import { MEMORY_TYPES, type MemoryType } from "../memory/schemas.js";
+import { makeMemoryDoc } from "../models/memory.model.js";
 import { recordAudit } from "../auth/audit.js";
 import {
   type AccessContext,
@@ -272,19 +273,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const query: Record<string, unknown> = { project };
     const repo = searchParams.get("repo");
     if (repo) query.repo = repo;
-    const rows = await store.db
-      .collection("mcp_context")
-      .find(query, { projection: { messages: 0, context: 0 } })
+    const { ensureMongoose } = await import("../db/mongoose.js");
+    const { McpContextModel } = await import("../models/mcpContext.model.js");
+    await ensureMongoose();
+    const rows = await McpContextModel.find(query, { messages: 0, context: 0 })
       .sort({ created_at: -1 })
       .limit(searchParams.has("limit") ? Number(searchParams.get("limit")) : 100)
-      .toArray();
+      .lean();
     return send(res, 200, rows);
   }
 
   const ctx = /^\/api\/context\/([^/]+)$/.exec(pathname);
   if (ctx && method === "GET") {
     const id = decodeURIComponent(ctx[1]);
-    const doc = await store.db.collection("mcp_context").findOne({ context_id: id });
+    const { ensureMongoose } = await import("../db/mongoose.js");
+    const { McpContextModel } = await import("../models/mcpContext.model.js");
+    await ensureMongoose();
+    const doc = await McpContextModel.findOne({ context_id: id }).lean();
     if (!doc) throw new HttpError(404, `No context '${id}'.`);
     return send(res, 200, doc);
   }
@@ -312,12 +317,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (pathname === "/api/runs" && method === "GET") {
     const project = searchParams.get("project");
     if (!project) throw new HttpError(400, "`project` query param is required.");
-    const rows = await store.db
-      .collection("runs")
-      .find({ project })
+    const { ensureMongoose } = await import("../db/mongoose.js");
+    const { RunModel } = await import("../models/run.model.js");
+    await ensureMongoose();
+    const rows = await RunModel.find({ project })
       .sort({ started_at: -1 })
       .limit(searchParams.has("limit") ? Number(searchParams.get("limit")) : 200)
-      .toArray();
+      .lean();
     return send(res, 200, rows);
   }
 
@@ -336,7 +342,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const rr = /^\/api\/runs\/([^/]+)$/.exec(pathname);
   if (rr && method === "GET") {
     const id = decodeURIComponent(rr[1]);
-    const run = await store.db.collection("runs").findOne({ _id: id as never });
+    const { ensureMongoose } = await import("../db/mongoose.js");
+    const { RunModel } = await import("../models/run.model.js");
+    await ensureMongoose();
+    const run = await RunModel.findOne({ _id: id }).lean();
     if (!run) throw new HttpError(404, `No run '${id}'.`);
     const events = await store.db.collection("events").find({ run_id: id }).toArray();
     const byType: Record<string, number> = {};
@@ -378,21 +387,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (pathname === "/api/users" && method === "GET") {
     await guard(actor, "users", "read");
     const { listUsers } = await import("../auth/users.js");
-    return send(res, 200, await listUsers(store.db));
+    return send(res, 200, await listUsers());
   }
   if (pathname === "/api/users" && method === "POST") {
     await guard(actor, "users", "create");
     const { createUser } = await import("../auth/users.js");
     const body = await readJson(req);
-    const created = await createUser(
-      {
-        username: String(body.username ?? ""),
-        email: String(body.email ?? ""),
-        password: String(body.password ?? ""),
-        role: body.role ? String(body.role) : undefined,
-      },
-      store.db,
-    );
+    const created = await createUser({
+      username: String(body.username ?? ""),
+      email: String(body.email ?? ""),
+      password: String(body.password ?? ""),
+      role: body.role ? String(body.role) : undefined,
+    });
     return send(res, 201, created);
   }
   const ur = /^\/api\/users\/([^/]+)\/role$/.exec(pathname);
@@ -400,7 +406,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     await guard(actor, "users", "set_role");
     const { setUserRole } = await import("../auth/users.js");
     const body = await readJson(req);
-    const updated = await setUserRole(decodeURIComponent(ur[1]), String(body.role ?? ""), store.db);
+    const updated = await setUserRole(decodeURIComponent(ur[1]), String(body.role ?? ""));
     return send(res, 200, updated);
   }
 

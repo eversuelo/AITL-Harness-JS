@@ -56,6 +56,7 @@ export interface SymbolRow {
   name?: string;
   refs?: string[];
   pagerank?: number;
+  branch?: string | null;
   [k: string]: unknown;
 }
 

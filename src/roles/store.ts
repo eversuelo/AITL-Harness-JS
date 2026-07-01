@@ -1,17 +1,17 @@
 /**
  * RoleStore — persists engineering roles (H11) in the existing `agents` collection,
  * discriminated by metadata.kind === "role". Reuses DefinitionStore for writes (so
- * created_at is preserved) and queries the collection directly for role-filtered reads.
+ * created_at is preserved) and queries the collection directly (via the Mongoose
+ * `AgentModel`) for role-filtered reads.
  */
 
-import type { Db, Document } from "mongodb";
-import { getDb } from "../db/client.js";
-import { AGENTS_COLLECTION } from "../projectctx/schemas.js";
+import { ensureMongoose } from "../db/mongoose.js";
+import { AGENTS_COLLECTION, AgentModel } from "../models/definition.model.js";
 import { DefinitionStore } from "../projectctx/store.js";
 import { type Role, makeRole } from "./schema.js";
 
 /** Map a stored agent-definition document back into a Role. */
-export function roleFromDoc(doc: Document): Role {
+export function roleFromDoc(doc: Record<string, unknown>): Role {
   const m = (doc.metadata ?? {}) as Record<string, unknown>;
   return makeRole({
     name: String(doc.name ?? ""),
@@ -27,14 +27,11 @@ export function roleFromDoc(doc: Document): Role {
 }
 
 export class RoleStore {
-  readonly db: Db;
-  constructor(db?: Db) {
-    this.db = db ?? getDb();
-  }
+  readonly collection = AGENTS_COLLECTION;
 
   /** Upsert a role as an agent definition with metadata.kind="role". */
   async upsert(project: string, role: Role): Promise<Role> {
-    await new DefinitionStore("agent", this.db).upsert({
+    await new DefinitionStore("agent").upsert({
       project,
       name: role.name,
       description: role.description,
@@ -55,21 +52,22 @@ export class RoleStore {
   }
 
   async get(project: string, name: string): Promise<Role | null> {
-    const doc = await this.db.collection(AGENTS_COLLECTION).findOne({ project, name, "metadata.kind": "role" });
+    await ensureMongoose();
+    const doc = await AgentModel.findOne({ project, name, "metadata.kind": "role" }).lean();
     return doc ? roleFromDoc(doc) : null;
   }
 
   async list(project: string): Promise<Role[]> {
-    const docs = await this.db
-      .collection(AGENTS_COLLECTION)
-      .find({ project, "metadata.kind": "role" })
+    await ensureMongoose();
+    const docs = await AgentModel.find({ project, "metadata.kind": "role" })
       .sort({ name: 1 })
-      .toArray();
+      .lean();
     return docs.map(roleFromDoc);
   }
 
   async delete(project: string, name: string): Promise<boolean> {
-    const res = await this.db.collection(AGENTS_COLLECTION).deleteOne({ project, name, "metadata.kind": "role" });
+    await ensureMongoose();
+    const res = await AgentModel.deleteOne({ project, name, "metadata.kind": "role" });
     return res.deletedCount === 1;
   }
 }

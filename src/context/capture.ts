@@ -17,10 +17,11 @@
 
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { getDb } from "../db/client.js";
+import { ensureMongoose } from "../db/mongoose.js";
+import { McpContextModel } from "../models/mcpContext.model.js";
+import { RunModel, makeRun } from "../models/run.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { summarizeSession, type SessionSummary } from "../memory/lifecycle.js";
-import { makeRun } from "../memory/schemas.js";
 import { classifySpec } from "../specs/classify.js";
 import type { Provider } from "../providers/base.js";
 
@@ -235,15 +236,15 @@ async function saveSnapshot(args: {
   repo?: string | null;
 }): Promise<string | null> {
   try {
-    const coll = getDb().collection("mcp_context");
+    await ensureMongoose();
     // Best-effort indexes (no-op once they exist); the collection is created on first insert.
-    await coll.createIndex({ project: 1, created_at: -1 }).catch(() => {});
-    await coll.createIndex({ project: 1, tags: 1 }).catch(() => {});
+    await McpContextModel.collection.createIndex({ project: 1, created_at: -1 }).catch(() => {});
+    await McpContextModel.collection.createIndex({ project: 1, tags: 1 }).catch(() => {});
     const contextId = randomUUID();
     const contentText = [args.title, args.summary, ...args.convo.map((m) => `${m.role}: ${m.content}`)]
       .filter(Boolean)
       .join("\n");
-    await coll.insertOne({
+    await McpContextModel.create({
       context_id: contextId,
       project: args.project,
       repo: args.repo ?? null,
@@ -308,8 +309,9 @@ export async function captureSession(opts: CaptureOpts): Promise<CaptureResult> 
       harness_config: { role: "host", host: source, captured: true, spec: isSpec },
       tags,
     });
-    await store.db.collection("runs").updateOne(
-      { _id: runId as never },
+    await ensureMongoose();
+    await RunModel.updateOne(
+      { _id: runId },
       {
         $set: {
           ...run,

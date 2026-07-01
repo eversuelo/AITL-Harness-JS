@@ -6,10 +6,17 @@
  * if the content actually changed, the PREVIOUS doc is snapshotted into a sibling
  * `*_history` collection and the live doc's `version` counter is bumped. Reads of
  * the live collections are untouched; history is queried separately.
+ *
+ * Post-Mongoose migration this reads/writes through the models instead of a raw `Db`:
+ * `kind` picks the live model (decisions→DecisionModel / memory→MemoryModel) and the
+ * matching history model (decisions_history→DecisionHistoryModel / memory_history→
+ * MemoryHistoryModel).
  */
 
-import type { Db } from "mongodb";
-import { makeHistoryEntry } from "./schemas.js";
+import type { Model } from "mongoose";
+import { DecisionModel } from "../models/decision.model.js";
+import { type HistoryKind, makeHistoryEntry, modelFor as historyModelFor } from "../models/history.model.js";
+import { MemoryModel } from "../models/memory.model.js";
 
 export interface VersioningActor {
   id?: string;
@@ -20,6 +27,14 @@ export interface VersioningActor {
 export const ADR_CONTENT_FIELDS = ["title", "context", "decision", "consequences", "status"] as const;
 /** Fields that define a memory doc's content for change detection. */
 export const MEMORY_CONTENT_FIELDS = ["description", "body", "type", "tags", "links", "category"] as const;
+
+/**
+ * The live (current-version) model backing a kind's collection. Widened to `Model<any>`
+ * so the union of the two distinct model generics resolves against a single call signature.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: intentional widening across two model generics
+const liveModelFor = (kind: HistoryKind): Model<any> =>
+  (kind === "decision" ? DecisionModel : MemoryModel) as unknown as Model<any>;
 
 /** True when any of `fields` differs between prev and next (deep-equal via JSON). */
 export function contentChanged(
@@ -40,10 +55,7 @@ function stripForSnapshot(doc: Record<string, unknown>): Record<string, unknown>
 }
 
 export interface ArchiveOpts {
-  db: Db;
   kind: "decision" | "memory";
-  liveCollection: string;
-  historyCollection: string;
   query: Record<string, unknown>;
   /** The next doc to be written; its `version` is set here (mutated in place). */
   nextDoc: Record<string, unknown> & { version?: number };
@@ -69,13 +81,15 @@ export interface ArchiveResult {
  * - existing, changed      → archive prior @ its version, version = prior + 1
  */
 export async function archiveAndBumpVersion(opts: ArchiveOpts): Promise<ArchiveResult> {
-  const { db, kind, liveCollection, historyCollection, query, nextDoc, contentFields, ref, actor, branch } = opts;
+  const { kind, query, nextDoc, contentFields, ref, actor, branch } = opts;
+  const liveModel = liveModelFor(kind);
+  const historyModel = historyModelFor(kind);
   // Stamp authorship + branch of the version about to be written (provenance).
   nextDoc.actor_id = actor?.id ?? null;
   nextDoc.actor_role = actor?.role ?? null;
   nextDoc.branch = branch ?? null;
 
-  const existing = (await db.collection(liveCollection).findOne(query)) as Record<string, unknown> | null;
+  const existing = (await liveModel.findOne(query).lean()) as Record<string, unknown> | null;
 
   if (!existing) {
     nextDoc.version = 1;
@@ -95,7 +109,7 @@ export async function archiveAndBumpVersion(opts: ArchiveOpts): Promise<ArchiveR
 
   // Attribute the archived snapshot to ITS author/branch (the prior version's),
   // not to whoever is superseding it now.
-  await db.collection(historyCollection).insertOne(
+  await historyModel.create(
     makeHistoryEntry({
       project: String(existing.project ?? nextDoc.project ?? ""),
       kind,

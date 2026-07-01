@@ -6,7 +6,7 @@
  */
 
 import { DefinitionStore } from "../projectctx/store.js";
-import type { DefinitionKind, DefinitionRecord } from "../projectctx/schemas.js";
+import type { DefinitionKind, DefinitionRecord } from "../models/definition.model.js";
 
 export interface BuildDefinitionOpts {
   kind: DefinitionKind;
