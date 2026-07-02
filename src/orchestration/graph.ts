@@ -59,7 +59,9 @@ export interface RunAgentOpts {
    * `chat()` and behaviour is byte-for-byte identical to a non-streaming run.
    */
   onDelta?: (delta: StreamDelta) => void;
-  /** Resume an existing run by id: reload its transcript and continue the loop. */
+  /** Resume an existing run by id: reload its transcript and continue the loop.
+   *  A non-empty `prompt` is appended as a NEW user turn (multi-turn chat, ADR-0003);
+   *  pass "" to just continue an interrupted run from where it stopped. */
   resume?: string;
   /**
    * Termination gate. When the model stops, the run only ends if this returns `true`;
@@ -163,6 +165,16 @@ export async function runAgent(
     convo = rebuildConvo(msgs);
     idx = msgs.length ? Number(msgs[msgs.length - 1].idx ?? msgs.length) : 0;
     promptText = String(msgs.find((m) => m.role === "user")?.content ?? prompt);
+    // Multi-turn (aitl chat): a non-empty prompt on resume is a NEW user turn appended
+    // to the recovered transcript; plain interrupted-run resumes pass "".
+    if (prompt) {
+      convo.push({ role: "user", content: prompt });
+      idx += 1;
+      await store.appendMessage(
+        makeMessage({ project, run_id: runId, idx, role: "user", content: prompt }),
+      );
+      promptText = prompt;
+    }
     await RunModel.updateOne({ _id: runId }, { $set: { status: "running", ended_at: null } });
     await store.logEvent(makeEvent({ project, run_id: runId, type: "resume", payload: { from_idx: idx } }));
   } else {

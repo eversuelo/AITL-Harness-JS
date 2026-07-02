@@ -234,6 +234,79 @@ program
   });
 
 program
+  .command("chat")
+  .requiredOption("--project <project>", "Project scope.")
+  .option("--model <m>", "primary | secondary | openrouter | lmstudio | openai-compat", "primary")
+  .option("--ask", "Confirm side-effect tools before they run (y/n/always).")
+  .option("--ask-fallback <policy>", "Non-TTY behavior for --ask: deny | allow.", "deny")
+  .option("--mcp [path]", "Mount tools from MCP servers declared in .mcp.json (or the given path).")
+  .description("Interactive multi-turn chat over the agent loop (minimal REPL per ADR-0003; streams live).")
+  .action(async (opts) => {
+    const { runAgent } = await import("./orchestration/graph.js");
+    const { getProvider } = await import("./providers/base.js");
+    const { createInterface } = await import("node:readline/promises");
+    const provider = await getProvider(opts.model);
+
+    let mcpMount: import("./mcpclient/client.js").McpMount | null = null;
+    if (opts.mcp) {
+      const { mountMcpTools } = await import("./mcpclient/client.js");
+      const { defaultRegistry } = await import("./tools/base.js");
+      mcpMount = await mountMcpTools({
+        registry: defaultRegistry,
+        configPath: typeof opts.mcp === "string" ? opts.mcp : undefined,
+        onEvent: (ev) =>
+          console.error(`[mcp] ${ev.server}: ${ev.ok ? `${ev.tools} tools mounted` : `FAILED — ${ev.error}`}`),
+      });
+    }
+
+    console.log(`aitl chat — project=${opts.project} model=${provider.name}`);
+    console.log("Commands: /exit   /new (fresh run)   /id (show run id)\n");
+
+    // Every turn resumes the SAME durable run (one inspectable transcript per session);
+    // hydration/skills routing runs once, on the first turn.
+    let runId: string | null = null;
+    try {
+      for (;;) {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        let line: string;
+        try {
+          line = (await rl.question("you> ")).trim();
+        } finally {
+          rl.close(); // free stdin for --ask prompts during the run
+        }
+        if (!line) continue;
+        if (line === "/exit") break;
+        if (line === "/new") {
+          runId = null;
+          console.log("(new run)");
+          continue;
+        }
+        if (line === "/id") {
+          console.log(runId ?? "(no run yet)");
+          continue;
+        }
+        const result = await runAgent(line, opts.project, {
+          provider,
+          installDefaultTools: true,
+          onDelta: (d) => process.stdout.write(d.text), // live text when chatStream exists
+          summarize: false, // a summary per REPL turn would be noise; run-show has the transcript
+          ...(opts.ask
+            ? { ask: true, askPolicy: opts.askFallback === "allow" ? ("allow" as const) : ("deny" as const) }
+            : {}),
+          ...(runId ? { resume: runId, hydrate: false, skills: false } : {}),
+        });
+        runId = result.run_id;
+        // Non-streaming providers resolve silently — print the final text once.
+        if (!provider.chatStream) process.stdout.write(result.final_text);
+        process.stdout.write("\n\n");
+      }
+    } finally {
+      await mcpMount?.close();
+      await closeClient();
+    }
+  });
+
+program
   .command("intervene")
   .argument("<runId>", "Run id the human intervened on.")
   .requiredOption("--reason <text>", "What you had to intervene on and why.")
@@ -1370,6 +1443,18 @@ Notes:
   report 0 tokens for streamed turns; a mid-stream retry may repeat deltas.
   --verify-cmd makes the run end only when the command exits 0 (quality gate).
   Persists a run+transcript; inspect it with: aitl run-show <runId>.`,
+
+  "chat": `
+Examples:
+  aitl chat --project demo --model lmstudio
+  aitl chat --project demo --ask --mcp
+
+Notes:
+  Multi-turn REPL over ONE durable run: each turn resumes the previous transcript
+  (inspect it later with: aitl run-show <runId>). /new starts a fresh run, /id prints
+  the current run id, /exit quits. Assistant text streams live when the provider
+  implements chatStream (ADR-0005); with --ask, side-effect tools pause for approval.
+  Minimal readline REPL per ADR-0003 — the Ink TUI (ADR-0004) remains a follow-up.`,
 
   "intervene": `
 Examples:
