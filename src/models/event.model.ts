@@ -37,6 +37,7 @@ const EVENT_TYPES = [
   "error",
   "resume",
   "spawn",
+  "mcp_connect",
   "review",
   "role_veto",
   "deliberation",

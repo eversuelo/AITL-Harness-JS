@@ -161,6 +161,7 @@ program
   .option("--roles <list>", "Comma-separated engineering roles (H11) to attach (e.g. security,architect,qa).")
   .option("--ask", "Human-in-the-loop: confirm side-effect tools (write_file, shell, mcp__*) before they run.")
   .option("--ask-fallback <policy>", "Non-TTY behavior for --ask: deny | allow.", "deny")
+  .option("--mcp [path]", "Mount tools from MCP servers declared in .mcp.json (or the given path).")
   .description("Run the model-agnostic agent loop, persisting the run/transcript to Mongo.")
   .action(async (task, opts) => {
     const { runAgent } = await import("./orchestration/graph.js");
@@ -181,23 +182,52 @@ program
       : undefined;
     // --bare operationalizes condition C0 (memory/specs/gates OFF); default is C2 (all ON).
     const roles = opts.roles ? String(opts.roles).split(",").map((r: string) => r.trim()).filter(Boolean) : undefined;
-    const result = await runAgent(task, opts.project, {
-      provider: await getProvider(opts.model),
-      installDefaultTools: true,
-      ...(verify ? { verify } : {}),
-      ...(roles ? { roles } : {}),
-      ...(opts.ask ? { ask: true, askPolicy: opts.askFallback === "allow" ? "allow" as const : "deny" as const } : {}),
-      ...(opts.bare ? { hydrate: false, skills: false, gates: false } : {}),
-    });
-    console.log(`run_id=${result.run_id} iters=${result.iters} gate_denials=${result.gate_denials}`);
-    if (result.decision_brief) {
-      console.log(`\n── Decision brief (H11) ── ${result.decision_brief.summary}`);
-      for (const v of result.decision_brief.verdicts) {
-        console.log(`  [${v.role}/${v.mode}] ${v.stance}${v.findings.length ? `: ${v.findings.join("; ")}` : ""}`);
+    // --mcp mounts external MCP servers' tools (ADR-0041). The CLI owns the lifecycle
+    // (mount here, close in finally) so runAgent stays a pure library.
+    let mcpMount: import("./mcpclient/client.js").McpMount | null = null;
+    if (opts.mcp) {
+      const { mountMcpTools } = await import("./mcpclient/client.js");
+      const { defaultRegistry } = await import("./tools/base.js");
+      mcpMount = await mountMcpTools({
+        registry: defaultRegistry,
+        configPath: typeof opts.mcp === "string" ? opts.mcp : undefined,
+        onEvent: (ev) => {
+          console.error(`[mcp] ${ev.server}: ${ev.ok ? `${ev.tools} tools mounted` : `FAILED — ${ev.error}`}`);
+        },
+      });
+      // Durable trace of what was reachable (project-scoped: no run exists yet).
+      try {
+        const { MemoryStore } = await import("./memory/store.js");
+        const { makeEvent } = await import("./models/event.model.js");
+        const store = new MemoryStore();
+        for (const s of mcpMount.servers) {
+          await store.logEvent(makeEvent({ project: opts.project, type: "mcp_connect", payload: { ...s } }));
+        }
+      } catch {
+        // telemetry is best-effort
       }
     }
-    console.log(`\n${result.final_text}`);
-    await closeClient();
+    try {
+      const result = await runAgent(task, opts.project, {
+        provider: await getProvider(opts.model),
+        installDefaultTools: true,
+        ...(verify ? { verify } : {}),
+        ...(roles ? { roles } : {}),
+        ...(opts.ask ? { ask: true, askPolicy: opts.askFallback === "allow" ? "allow" as const : "deny" as const } : {}),
+        ...(opts.bare ? { hydrate: false, skills: false, gates: false } : {}),
+      });
+      console.log(`run_id=${result.run_id} iters=${result.iters} gate_denials=${result.gate_denials}`);
+      if (result.decision_brief) {
+        console.log(`\n── Decision brief (H11) ── ${result.decision_brief.summary}`);
+        for (const v of result.decision_brief.verdicts) {
+          console.log(`  [${v.role}/${v.mode}] ${v.stance}${v.findings.length ? `: ${v.findings.join("; ")}` : ""}`);
+        }
+      }
+      console.log(`\n${result.final_text}`);
+    } finally {
+      await mcpMount?.close();
+      await closeClient();
+    }
   });
 
 program
@@ -1316,6 +1346,8 @@ Examples:
   aitl run "harden the upload" --project demo --roles security,architect
   aitl run "add a health endpoint" --project demo --model lmstudio # local LM Studio server
   aitl run "migrate the config file" --project demo --ask          # confirm write_file/shell first
+  aitl run "use the db tools to list repos" --project demo --mcp   # mount ./.mcp.json servers
+  aitl run "..." --project demo --mcp=./configs/tools.mcp.json     # explicit manifest path
 
 Notes:
   Drives the model-agnostic loop (needs a configured model, e.g. OPENROUTER_API_KEY).
@@ -1325,6 +1357,10 @@ Notes:
   --ask pauses before side-effect tools (y/n/always, prompt on stderr); without a TTY
   the --ask-fallback policy decides (deny by default). Approvals + answer latency show
   up in run-show as approvals/supervision_minutes (human supervision metric).
+  --mcp mounts every server in .mcp.json (standard format, same file Claude Code reads)
+  as tools named mcp__<server>__<tool>; non read-only MCP tools respect --ask. Use
+  --mcp=<path> (with =) since the path is optional. A server that fails to start is
+  skipped with a warning — the run continues.
   --verify-cmd makes the run end only when the command exits 0 (quality gate).
   Persists a run+transcript; inspect it with: aitl run-show <runId>.`,
 
