@@ -48,6 +48,10 @@ export interface RunAgentOpts {
   installDefaultTools?: boolean;
   /** Max provider-call retries on transient errors, per turn (default 3). */
   retries?: number;
+  /** Human-in-the-loop (ADR-0040): confirm side-effect tools (requiresApproval) before they run. */
+  ask?: boolean;
+  /** Non-interactive fallback for `ask` when stdin is not a TTY: "deny" (default) | "allow". */
+  askPolicy?: "deny" | "allow";
   /** Resume an existing run by id: reload its transcript and continue the loop. */
   resume?: string;
   /**
@@ -165,6 +169,27 @@ export async function runAgent(
     await store.appendMessage(
       makeMessage({ project, run_id: runId, idx, role: "user", content: prompt }),
     );
+  }
+
+  // ── human-in-the-loop (--ask): approval gate for side-effect tools (ADR-0040) ──
+  // Registered after the deterministic gates so a human is never asked about a call
+  // that policy would deny anyway. Idempotent per registry (multi-turn safe).
+  if (opts.ask) {
+    const { installApprovalGate } = await import("../hooks/approval.js");
+    installApprovalGate(registry, {
+      policy: opts.askPolicy,
+      onDecision: (ev) => {
+        // The human's wait time (ms) feeds the supervision metric (H11) in run-show.
+        void store.logEvent(
+          makeEvent({
+            project,
+            run_id: runId,
+            type: "approval",
+            payload: { tool: ev.tool, decision: ev.decision, ms: ev.ms, interactive: ev.interactive },
+          }),
+        );
+      },
+    });
   }
 
   // ── session start: build the system prompt from durable context ──

@@ -80,6 +80,8 @@ export interface ToolPort {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
+  /** Side-effect tools set this so `--ask` (ADR-0040) can request human approval. */
+  readonly requiresApproval?: boolean;
   run(args: Record<string, unknown>): Promise<string>;
 }
 

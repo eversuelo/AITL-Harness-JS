@@ -159,6 +159,8 @@ program
   .option("--bare", "C0 baseline: no hydration, no skills, no gates (improvised agent).")
   .option("--verify-cmd <cmd>", "Quality gate: shell command that must exit 0 to end the run (e.g. a test cmd).")
   .option("--roles <list>", "Comma-separated engineering roles (H11) to attach (e.g. security,architect,qa).")
+  .option("--ask", "Human-in-the-loop: confirm side-effect tools (write_file, shell, mcp__*) before they run.")
+  .option("--ask-fallback <policy>", "Non-TTY behavior for --ask: deny | allow.", "deny")
   .description("Run the model-agnostic agent loop, persisting the run/transcript to Mongo.")
   .action(async (task, opts) => {
     const { runAgent } = await import("./orchestration/graph.js");
@@ -184,6 +186,7 @@ program
       installDefaultTools: true,
       ...(verify ? { verify } : {}),
       ...(roles ? { roles } : {}),
+      ...(opts.ask ? { ask: true, askPolicy: opts.askFallback === "allow" ? "allow" as const : "deny" as const } : {}),
       ...(opts.bare ? { hydrate: false, skills: false, gates: false } : {}),
     });
     console.log(`run_id=${result.run_id} iters=${result.iters} gate_denials=${result.gate_denials}`);
@@ -237,11 +240,13 @@ program
     const byType: Record<string, number> = {};
     let hydrateSections: Record<string, unknown> | null = null;
     let interventionMinutes = 0;
+    let approvalMs = 0;
     for (const e of events) {
       const t = String(e.type);
       byType[t] = (byType[t] ?? 0) + 1;
       if (t === "hydrate") hydrateSections = (e.payload as Record<string, unknown>) ?? null;
       if (t === "human_intervention") interventionMinutes += Number((e.payload as Record<string, unknown>)?.minutes ?? 0);
+      if (t === "approval") approvalMs += Number((e.payload as Record<string, unknown>)?.ms ?? 0);
     }
     const tu = (run.token_usage as { input?: number; output?: number }) ?? {};
     const ms = run.started_at && run.ended_at ? new Date(run.ended_at as string).getTime() - new Date(run.started_at as string).getTime() : null;
@@ -261,6 +266,9 @@ program
       tool_calls: run.tool_calls ?? byType.tool_call ?? 0,
       gate_denials: run.gate_denials ?? byType.gate ?? 0,
       human_interventions: { count: byType.human_intervention ?? 0, minutes: interventionMinutes },
+      // In-loop approvals (--ask, ADR-0040): the human's answer latency is supervision time.
+      approvals: { count: byType.approval ?? 0, ms: approvalMs },
+      supervision_minutes: interventionMinutes + approvalMs / 60000,
       roles: run.roles ?? [],
       decision_blocked: run.decision_blocked ?? false,
       review_events: { review: byType.review ?? 0, role_veto: byType.role_veto ?? 0, deliberation: byType.deliberation ?? 0 },
@@ -1307,12 +1315,16 @@ Examples:
   aitl run "fix the failing test" --project demo --verify-cmd "npm test"
   aitl run "harden the upload" --project demo --roles security,architect
   aitl run "add a health endpoint" --project demo --model lmstudio # local LM Studio server
+  aitl run "migrate the config file" --project demo --ask          # confirm write_file/shell first
 
 Notes:
   Drives the model-agnostic loop (needs a configured model, e.g. OPENROUTER_API_KEY).
   --model lmstudio targets a local LM Studio server (default http://localhost:1234/v1;
   start it with \`lms server start\` and set LMSTUDIO_MODEL). --model openai-compat
   targets any OpenAI-compatible endpoint via OPENAI_COMPAT_BASE_URL/MODEL.
+  --ask pauses before side-effect tools (y/n/always, prompt on stderr); without a TTY
+  the --ask-fallback policy decides (deny by default). Approvals + answer latency show
+  up in run-show as approvals/supervision_minutes (human supervision metric).
   --verify-cmd makes the run end only when the command exits 0 (quality gate).
   Persists a run+transcript; inspect it with: aitl run-show <runId>.`,
 

@@ -11,6 +11,8 @@ export interface Tool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
+  /** Side-effect tools set this so `--ask` (ADR-0040) can request human approval. */
+  readonly requiresApproval?: boolean;
   /** Execute the tool and return a string result. */
   run(args: Record<string, unknown>): Promise<string>;
 }
@@ -27,7 +29,15 @@ export function toolSchema(tool: Tool): Record<string, unknown> {
 }
 
 // A gate returns [allowed, reason]. Registered by src/hooks/gates.ts.
-export type PermissionGate = (name: string, args: Record<string, unknown>) => [boolean, string];
+export type GateVerdict = [boolean, string];
+/** Deterministic gates stay sync — factories keep this type so callers may destructure. */
+export type SyncPermissionGate = (name: string, args: Record<string, unknown>) => GateVerdict;
+/** The registry accepts sync AND async gates (ADR-0040): `call()` awaits each verdict,
+ *  which is a no-op for plain tuples — every pre-existing gate works unchanged. */
+export type PermissionGate = (
+  name: string,
+  args: Record<string, unknown>,
+) => GateVerdict | Promise<GateVerdict>;
 
 /**
  * Pre-tool hook (ADR-0039): observes — and may rewrite — the args before the tool
@@ -69,6 +79,11 @@ export class ToolRegistry {
     this.tools.set(tool.name, tool);
   }
 
+  /** Look up a registered tool (used by the approval gate to read `requiresApproval`). */
+  get(name: string): Tool | undefined {
+    return this.tools.get(name);
+  }
+
   addGate(gate: PermissionGate): void {
     this.gates.push(gate);
   }
@@ -102,7 +117,8 @@ export class ToolRegistry {
     opts: { onHookEvent?: (ev: ToolHookEvent) => void } = {},
   ): Promise<string> {
     for (const gate of this.gates) {
-      const [allowed, reason] = gate(name, args);
+      // `await` on a plain tuple is a no-op, so sync gates are untouched (ADR-0040).
+      const [allowed, reason] = await gate(name, args);
       if (!allowed) {
         onDeny?.(reason);
         return `[denied by gate] ${reason}`;

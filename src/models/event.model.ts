@@ -27,6 +27,7 @@ const EVENT_TYPES = [
   "tool_pre_hook",
   "tool_post_hook",
   "gate",
+  "approval",
   "synthesis",
   "hydrate",
   "session_summary",
