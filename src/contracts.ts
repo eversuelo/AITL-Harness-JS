@@ -64,13 +64,18 @@ export const ProviderCapabilitiesSchema = z.object({
 export type ProviderCapabilities = z.infer<typeof ProviderCapabilitiesSchema>;
 
 // ── 3. structural ports the core depends on ──────────────────────────────────
-import type { ChatOpts, ChatTurn, CompleteOpts } from "./providers/base.js";
+import type { ChatOpts, ChatTurn, CompleteOpts, StreamDelta } from "./providers/base.js";
 
 /** The only model interface the harness knows about (see providers/base.ts). */
 export interface ProviderPort {
   readonly name: string;
   complete(prompt: string, opts?: CompleteOpts): Promise<string>;
   chat(messages: Record<string, unknown>[], opts?: ChatOpts): Promise<ChatTurn>;
+  /** Optional streaming variant (ADR-0005); callers fall back to `chat()`. */
+  chatStream?(
+    messages: Record<string, unknown>[],
+    opts?: ChatOpts,
+  ): AsyncGenerator<StreamDelta, ChatTurn, void>;
   countTokens(text: string): number;
   capabilities(): ProviderCapabilities;
 }

@@ -20,10 +20,11 @@ import { RunModel, makeRun } from "../models/run.model.js";
 import { MemoryStore } from "../memory/store.js";
 import { routeSkills } from "../projectctx/router.js";
 import { DefinitionStore } from "../projectctx/store.js";
-import { type Provider, getProvider } from "../providers/base.js";
+import { type Provider, type StreamDelta, getProvider } from "../providers/base.js";
 import { denyPathsGate, installDefaultGates } from "../hooks/gates.js";
 import { type ToolRegistry, defaultRegistry } from "../tools/base.js";
 import { withRetry } from "../util/retry.js";
+import { consumeStream } from "./stream.js";
 
 export interface RunAgentOpts {
   provider?: Provider;
@@ -52,6 +53,12 @@ export interface RunAgentOpts {
   ask?: boolean;
   /** Non-interactive fallback for `ask` when stdin is not a TTY: "deny" (default) | "allow". */
   askPolicy?: "deny" | "allow";
+  /**
+   * Streaming observer (ADR-0005): receives assistant text deltas as they arrive.
+   * Only used when the provider implements `chatStream`; otherwise the loop calls
+   * `chat()` and behaviour is byte-for-byte identical to a non-streaming run.
+   */
+  onDelta?: (delta: StreamDelta) => void;
   /** Resume an existing run by id: reload its transcript and continue the loop. */
   resume?: string;
   /**
@@ -234,8 +241,16 @@ export async function runAgent(
       }
 
       // Provider call is retried on transient failures (429/5xx/network) with backoff.
+      // With an observer + a streaming provider the turn streams (ADR-0005); the
+      // resolved ChatTurn is identical either way. A retry mid-stream replays the
+      // whole turn, so deltas may repeat on flaky networks (persistence never does).
+      const onDelta = opts.onDelta;
+      const doTurn = () =>
+        onDelta && provider.chatStream
+          ? consumeStream(provider.chatStream(convo, { tools: registry.schemas(), system }), onDelta)
+          : provider.chat(convo, { tools: registry.schemas(), system });
       const turn = await withRetry(
-        () => provider.chat(convo, { tools: registry.schemas(), system }),
+        doTurn,
         {
           retries: opts.retries ?? 3,
           onRetry: ({ attempt, delayMs, error }) =>

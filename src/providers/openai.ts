@@ -8,7 +8,71 @@
 
 import OpenAI from "openai";
 import type { ProviderCapabilities } from "../contracts.js";
-import { type ChatOpts, type ChatTurn, type CompleteOpts, type Provider, estimateTokens } from "./base.js";
+import {
+  type ChatOpts,
+  type ChatTurn,
+  type CompleteOpts,
+  type Provider,
+  type StreamDelta,
+  estimateTokens,
+} from "./base.js";
+
+// ── streaming accumulator (pure, exported for tests — ADR-0005) ───────────────
+// OpenAI streams tool calls FRAGMENTED: `delta.tool_calls[].index` names a slot,
+// `id`/`function.name` arrive on the slot's first fragment, and `function.arguments`
+// arrives as string pieces to concatenate. The final usage chunk (needs
+// `stream_options.include_usage`) carries `usage` with an EMPTY `choices` array.
+
+export interface StreamAccState {
+  text: string;
+  toolSlots: Map<number, { id?: string; name: string; args: string }>;
+  finish: string | null;
+  usage: { input: number; output: number };
+}
+
+export function newStreamAccState(): StreamAccState {
+  return { text: "", toolSlots: new Map(), finish: null, usage: { input: 0, output: 0 } };
+}
+
+/** Fold one chunk into the state; returns the text delta ("" when none). */
+export function foldStreamChunk(state: StreamAccState, chunk: OpenAI.ChatCompletionChunk): string {
+  if (chunk.usage) {
+    state.usage = {
+      input: chunk.usage.prompt_tokens ?? 0,
+      output: chunk.usage.completion_tokens ?? 0,
+    };
+  }
+  const choice = chunk.choices?.[0];
+  if (!choice) return ""; // e.g. the usage-only final chunk
+  if (choice.finish_reason) state.finish = choice.finish_reason;
+  const delta = choice.delta ?? {};
+  for (const tc of delta.tool_calls ?? []) {
+    const slot = state.toolSlots.get(tc.index) ?? { name: "", args: "" };
+    if (tc.id) slot.id = tc.id;
+    if (tc.function?.name) slot.name = tc.function.name;
+    if (tc.function?.arguments) slot.args += tc.function.arguments;
+    state.toolSlots.set(tc.index, slot);
+  }
+  const text = typeof delta.content === "string" ? delta.content : "";
+  state.text += text;
+  return text;
+}
+
+/** Resolve the accumulated state into the same normalized ChatTurn `chat()` returns. */
+export function finishStream(state: StreamAccState): ChatTurn {
+  const tool_calls = [...state.toolSlots.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, slot]) => {
+      let input: Record<string, unknown> = {};
+      try {
+        input = JSON.parse(slot.args || "{}") as Record<string, unknown>;
+      } catch {
+        input = {}; // malformed fragment stream — mirror chat()'s defensive parse
+      }
+      return { ...(slot.id ? { id: slot.id } : {}), name: slot.name, input };
+    });
+  return { text: state.text, tool_calls, usage: state.usage, stop_reason: state.finish };
+}
 
 export interface OpenAIProviderOpts {
   name?: string;
@@ -83,6 +147,34 @@ export class OpenAIProvider implements Provider {
       },
       stop_reason: resp.choices[0].finish_reason,
     };
+  }
+
+  async *chatStream(
+    messages: Record<string, unknown>[],
+    opts: ChatOpts = {},
+  ): AsyncGenerator<StreamDelta, ChatTurn, void> {
+    const msgs = [
+      ...(opts.system ? [{ role: "system", content: opts.system }] : []),
+      ...messages,
+    ] as unknown as OpenAI.ChatCompletionMessageParam[];
+    const oaiTools = (opts.tools ?? []).map((t) => ({ type: "function" as const, function: t }));
+
+    const stream = await this.client.chat.completions.create({
+      model: this.model,
+      messages: msgs,
+      tools: oaiTools.length ? (oaiTools as unknown as OpenAI.ChatCompletionTool[]) : undefined,
+      max_tokens: opts.maxTokens ?? 4096,
+      stream: true,
+      // Some OpenAI-compatible servers (older LM Studio builds) skip the usage chunk;
+      // the turn then reports 0 tokens — documented in the --stream CLI help.
+      stream_options: { include_usage: true },
+    });
+    const state = newStreamAccState();
+    for await (const chunk of stream) {
+      const text = foldStreamChunk(state, chunk);
+      if (text) yield { type: "text", text };
+    }
+    return finishStream(state);
   }
 
   countTokens(text: string): number {

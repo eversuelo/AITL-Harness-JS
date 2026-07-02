@@ -162,6 +162,7 @@ program
   .option("--ask", "Human-in-the-loop: confirm side-effect tools (write_file, shell, mcp__*) before they run.")
   .option("--ask-fallback <policy>", "Non-TTY behavior for --ask: deny | allow.", "deny")
   .option("--mcp [path]", "Mount tools from MCP servers declared in .mcp.json (or the given path).")
+  .option("--stream", "Stream assistant text deltas to stdout as they arrive (ADR-0005).")
   .description("Run the model-agnostic agent loop, persisting the run/transcript to Mongo.")
   .action(async (task, opts) => {
     const { runAgent } = await import("./orchestration/graph.js");
@@ -214,8 +215,10 @@ program
         ...(verify ? { verify } : {}),
         ...(roles ? { roles } : {}),
         ...(opts.ask ? { ask: true, askPolicy: opts.askFallback === "allow" ? "allow" as const : "deny" as const } : {}),
+        ...(opts.stream ? { onDelta: (d: { text: string }) => process.stdout.write(d.text) } : {}),
         ...(opts.bare ? { hydrate: false, skills: false, gates: false } : {}),
       });
+      if (opts.stream) process.stdout.write("\n\n"); // separate the streamed text from the summary line
       console.log(`run_id=${result.run_id} iters=${result.iters} gate_denials=${result.gate_denials}`);
       if (result.decision_brief) {
         console.log(`\n── Decision brief (H11) ── ${result.decision_brief.summary}`);
@@ -223,7 +226,7 @@ program
           console.log(`  [${v.role}/${v.mode}] ${v.stance}${v.findings.length ? `: ${v.findings.join("; ")}` : ""}`);
         }
       }
-      console.log(`\n${result.final_text}`);
+      if (!opts.stream) console.log(`\n${result.final_text}`); // already streamed live
     } finally {
       await mcpMount?.close();
       await closeClient();
@@ -1348,6 +1351,7 @@ Examples:
   aitl run "migrate the config file" --project demo --ask          # confirm write_file/shell first
   aitl run "use the db tools to list repos" --project demo --mcp   # mount ./.mcp.json servers
   aitl run "..." --project demo --mcp=./configs/tools.mcp.json     # explicit manifest path
+  aitl run "write a haiku about tests" --project demo --stream     # live token deltas
 
 Notes:
   Drives the model-agnostic loop (needs a configured model, e.g. OPENROUTER_API_KEY).
@@ -1361,6 +1365,9 @@ Notes:
   as tools named mcp__<server>__<tool>; non read-only MCP tools respect --ask. Use
   --mcp=<path> (with =) since the path is optional. A server that fails to start is
   skipped with a warning — the run continues.
+  --stream prints assistant deltas live (approval prompts go to stderr, so --ask
+  combines cleanly). Servers that omit the stream usage chunk (older LM Studio)
+  report 0 tokens for streamed turns; a mid-stream retry may repeat deltas.
   --verify-cmd makes the run end only when the command exits 0 (quality gate).
   Persists a run+transcript; inspect it with: aitl run-show <runId>.`,
 

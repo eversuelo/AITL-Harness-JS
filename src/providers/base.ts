@@ -30,12 +30,25 @@ export interface ChatOpts {
   maxTokens?: number;
 }
 
+/** Incremental streaming unit (ADR-0005). Kept tiny on purpose: text now; richer
+ *  delta kinds (tool_call started, …) can be added without breaking consumers. */
+export type StreamDelta = { type: "text"; text: string };
+
 export interface Provider {
   readonly name: string;
   /** Return a single text completion. */
   complete(prompt: string, opts?: CompleteOpts): Promise<string>;
   /** Run one model turn, returning a normalized {text, tool_calls, usage, stop_reason}. */
   chat(messages: Record<string, unknown>[], opts?: ChatOpts): Promise<ChatTurn>;
+  /**
+   * Optional streaming variant (ADR-0005): yields text deltas and RETURNS the same
+   * normalized ChatTurn `chat()` would resolve (usage included). Providers without
+   * streaming leave it undefined; callers fall back to `chat()`.
+   */
+  chatStream?(
+    messages: Record<string, unknown>[],
+    opts?: ChatOpts,
+  ): AsyncGenerator<StreamDelta, ChatTurn, void>;
   /** Rough ~4-chars/token estimate by default; providers may use a real tokenizer. */
   countTokens(text: string): number;
   /** Declare what this provider/host can do (the loop never infers these). */
