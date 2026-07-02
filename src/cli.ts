@@ -307,6 +307,33 @@ program
   });
 
 program
+  .command("sdd")
+  .argument("<prompt>", "Spec or task prompt (auto-classified; ad-hoc tasks get a generated spec).")
+  .requiredOption("--project <project>", "Project scope.")
+  .option("--model <m>", "primary | secondary | openrouter | lmstudio | openai-compat", "primary")
+  .option("--repo <repo>", "Repo sub-scope to tag the artifacts with.")
+  .option("--max-tasks <n>", "Maximum number of tasks to decompose into.", "10")
+  .description("SDD phase D (ADR-0042): spec → design doc → task decomposition, persisted as linked memory artifacts.")
+  .action(async (prompt, opts) => {
+    const { runSddPipeline } = await import("./specs/pipeline.js");
+    const { getProvider } = await import("./providers/base.js");
+    const res = await runSddPipeline(prompt, {
+      project: opts.project,
+      provider: await getProvider(opts.model),
+      repo: opts.repo ?? null,
+      maxTasks: Number(opts.maxTasks) || 10,
+    });
+    console.log(
+      `pipeline_id=${res.pipeline_id} spec=${res.spec_slug}${res.generated_spec ? " (generated)" : " (verbatim)"} design=${res.design_slug}`,
+    );
+    console.log(`tasks (${res.tasks.length}):`);
+    for (const t of res.tasks) {
+      console.log(`  ${t.id}  ${t.title}${t.dependsOn.length ? `  [after: ${t.dependsOn.join(", ")}]` : ""}`);
+    }
+    await closeClient();
+  });
+
+program
   .command("intervene")
   .argument("<runId>", "Run id the human intervened on.")
   .requiredOption("--reason <text>", "What you had to intervene on and why.")
@@ -1455,6 +1482,19 @@ Notes:
   the current run id, /exit quits. Assistant text streams live when the provider
   implements chatStream (ADR-0005); with --ask, side-effect tools pause for approval.
   Minimal readline REPL per ADR-0003 — the Ink TUI (ADR-0004) remains a follow-up.`,
+
+  "sdd": `
+Examples:
+  aitl sdd "Como admin quiero exportar reportes CSV. Criterios: ..." --project demo
+  aitl sdd "fix the login button" --project demo --model lmstudio    # spec gets generated
+
+Notes:
+  Phase D of spec-driven development (ADR-0042). A prompt that already reads as a spec
+  is persisted VERBATIM (type "spec"); an ad-hoc task is formalized first. Then the
+  provider derives a design doc (type "design") and decomposes it into tasks (type
+  "task"), all chained by tags run:<id8> / parent:<slug>. The pipeline shows up as a
+  Run (harness_config.sdd=true) in run-show and the web UI Runs tab. Search artifacts
+  with: aitl search "sdd design" --project <p>.`,
 
   "intervene": `
 Examples:
